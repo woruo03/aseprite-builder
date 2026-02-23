@@ -183,6 +183,7 @@ jobs:
             echo "Failed to locate Aseprite source root (missing project(aseprite) in CMakeLists.txt)." >&2
             exit 1
           fi
+          source_dir="$(realpath "${source_dir}")"
 
           curl -fL "${SKIA_ZIP_URL}" -o work/deps/skia.zip
           unzip -q work/deps/skia.zip -d work/deps/skia
@@ -194,13 +195,16 @@ jobs:
           fi
 
           skia_dir="${skia_lib%/out/Release-x64/libskia.a}"
+          skia_dir="$(realpath "${skia_dir}")"
           skia_library_dir="${skia_dir}/out/Release-x64"
+          skia_library_dir="$(realpath "${skia_library_dir}")"
+          skia_library="${skia_library_dir}/libskia.a"
 
           {
             echo "source_dir=${source_dir}"
             echo "skia_dir=${skia_dir}"
             echo "skia_library_dir=${skia_library_dir}"
-            echo "skia_library=${skia_library_dir}/libskia.a"
+            echo "skia_library=${skia_library}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Build Aseprite
