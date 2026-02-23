@@ -1,0 +1,301 @@
+name: Build Aseprite for Debian 13
+
+on:
+  push:
+    tags:
+      - "*"
+  workflow_dispatch:
+    inputs:
+      aseprite_tag:
+        description: "Upstream Aseprite tag (empty = latest release)"
+        required: false
+        default: ""
+        type: string
+      skia_release_tag:
+        description: "Upstream aseprite/skia release tag"
+        required: false
+        default: "m124"
+        type: string
+      deb_revision:
+        description: "Debian revision suffix"
+        required: false
+        default: "1"
+        type: string
+      release_tag:
+        description: "Release tag in this repository (empty = auto)"
+        required: false
+        default: ""
+        type: string
+      release_name:
+        description: "Release name in this repository (empty = auto)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            g++ clang cmake ninja-build \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libgl1-mesa-dev libfontconfig1-dev \
+            curl jq unzip tar dpkg-dev
+
+      - name: Resolve upstream metadata
+        id: meta
+        env:
+          INPUT_ASEPRITE_TAG: ${{ github.event.inputs.aseprite_tag || '' }}
+          INPUT_SKIA_RELEASE_TAG: ${{ github.event.inputs.skia_release_tag || '' }}
+          INPUT_DEB_REVISION: ${{ github.event.inputs.deb_revision || '' }}
+          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag || '' }}
+          INPUT_RELEASE_NAME: ${{ github.event.inputs.release_name || '' }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_ASEPRITE_TAG}" ]; then
+            aseprite_api="https://api.github.com/repos/aseprite/aseprite/releases/tags/${INPUT_ASEPRITE_TAG}"
+          else
+            aseprite_api="https://api.github.com/repos/aseprite/aseprite/releases/latest"
+          fi
+
+          aseprite_json="$(curl -fsSL -H "Accept: application/vnd.github+json" "${aseprite_api}")"
+          aseprite_tag="$(printf '%s' "${aseprite_json}" | jq -r '.tag_name // empty')"
+          source_zip_url="$(printf '%s' "${aseprite_json}" | jq -r '[.assets[] | select(.name | test("^Aseprite-.*-Source\\.zip$"))][0].browser_download_url // empty')"
+
+          if [ -z "${aseprite_tag}" ]; then
+            echo "Failed to resolve Aseprite release tag from: ${aseprite_api}" >&2
+            exit 1
+          fi
+
+          if [ -z "${source_zip_url}" ]; then
+            echo "Failed to find Aseprite source zip asset (Aseprite-*-Source.zip)." >&2
+            exit 1
+          fi
+
+          skia_release_tag="${INPUT_SKIA_RELEASE_TAG:-m124}"
+          skia_api="https://api.github.com/repos/aseprite/skia/releases/tags/${skia_release_tag}"
+          skia_json="$(curl -fsSL -H "Accept: application/vnd.github+json" "${skia_api}")"
+          skia_zip_url="$(printf '%s' "${skia_json}" | jq -r '[.assets[] | select(.name == "Skia-Linux-Release-x64.zip")][0].browser_download_url // empty')"
+
+          if [ -z "${skia_zip_url}" ]; then
+            echo "Failed to find Skia asset Skia-Linux-Release-x64.zip for tag ${skia_release_tag}." >&2
+            exit 1
+          fi
+
+          raw_deb_version="${aseprite_tag#v}"
+          deb_version="$(printf '%s' "${raw_deb_version}" | tr -c 'A-Za-z0-9.+:~' '.')"
+          deb_version="${deb_version#.}"
+          deb_version="${deb_version%.}"
+          if [ -z "${deb_version}" ]; then
+            echo "Failed to compute deb version from tag ${aseprite_tag}" >&2
+            exit 1
+          fi
+
+          deb_revision="${INPUT_DEB_REVISION:-1}"
+          deb_revision="$(printf '%s' "${deb_revision}" | tr -c 'A-Za-z0-9+.~' '.')"
+          deb_revision="${deb_revision#.}"
+          deb_revision="${deb_revision%.}"
+          if [ -z "${deb_revision}" ]; then
+            echo "Invalid deb revision" >&2
+            exit 1
+          fi
+
+          default_release_tag="aseprite-${aseprite_tag}-debian13-x64"
+          default_release_name="Aseprite ${aseprite_tag} for Debian 13 (x64)"
+          release_tag="${INPUT_RELEASE_TAG:-${default_release_tag}}"
+          release_name="${INPUT_RELEASE_NAME:-${default_release_name}}"
+
+          tar_name="aseprite-${aseprite_tag}-debian13-x64.tar.gz"
+          deb_name="aseprite_${deb_version}-${deb_revision}_amd64.deb"
+
+          {
+            echo "aseprite_tag=${aseprite_tag}"
+            echo "source_zip_url=${source_zip_url}"
+            echo "skia_release_tag=${skia_release_tag}"
+            echo "skia_zip_url=${skia_zip_url}"
+            echo "deb_version=${deb_version}"
+            echo "deb_revision=${deb_revision}"
+            echo "release_tag=${release_tag}"
+            echo "release_name=${release_name}"
+            echo "tar_name=${tar_name}"
+            echo "deb_name=${deb_name}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Download Aseprite source and Skia
+        id: download
+        env:
+          SOURCE_ZIP_URL: ${{ steps.meta.outputs.source_zip_url }}
+          SKIA_ZIP_URL: ${{ steps.meta.outputs.skia_zip_url }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p work/src work/deps
+
+          curl -fL "${SOURCE_ZIP_URL}" -o work/src/aseprite-source.zip
+          unzip -q work/src/aseprite-source.zip -d work/src
+
+          source_dir="$(find work/src -mindepth 1 -maxdepth 1 -type d -name 'Aseprite-*' | head -n 1)"
+          if [ -z "${source_dir}" ]; then
+            source_dir="$(find work/src -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          fi
+          if [ -z "${source_dir}" ]; then
+            echo "Failed to locate extracted Aseprite source directory." >&2
+            exit 1
+          fi
+
+          curl -fL "${SKIA_ZIP_URL}" -o work/deps/skia.zip
+          unzip -q work/deps/skia.zip -d work/deps/skia
+
+          skia_lib="$(find work/deps/skia -type f -path '*/out/Release-x64/libskia.a' | head -n 1)"
+          if [ -z "${skia_lib}" ]; then
+            echo "Failed to locate libskia.a in extracted Skia package." >&2
+            exit 1
+          fi
+
+          skia_dir="${skia_lib%/out/Release-x64/libskia.a}"
+          skia_library_dir="${skia_dir}/out/Release-x64"
+
+          {
+            echo "source_dir=${source_dir}"
+            echo "skia_dir=${skia_dir}"
+            echo "skia_library_dir=${skia_library_dir}"
+            echo "skia_library=${skia_library_dir}/libskia.a"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build Aseprite
+        env:
+          SOURCE_DIR: ${{ steps.download.outputs.source_dir }}
+          SKIA_DIR: ${{ steps.download.outputs.skia_dir }}
+          SKIA_LIBRARY_DIR: ${{ steps.download.outputs.skia_library_dir }}
+          SKIA_LIBRARY: ${{ steps.download.outputs.skia_library }}
+        run: |
+          set -euo pipefail
+          export CC=clang
+          export CXX=clang++
+
+          cmake -S "${SOURCE_DIR}" -B "${SOURCE_DIR}/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_FLAGS:STRING=-stdlib=libstdc++ \
+            -DCMAKE_EXE_LINKER_FLAGS:STRING=-stdlib=libstdc++ \
+            -DLAF_BACKEND=skia \
+            -DSKIA_DIR="${SKIA_DIR}" \
+            -DSKIA_LIBRARY_DIR="${SKIA_LIBRARY_DIR}" \
+            -DSKIA_LIBRARY="${SKIA_LIBRARY}"
+
+          ninja -C "${SOURCE_DIR}/build" aseprite
+
+      - name: Package tar.gz
+        env:
+          SOURCE_DIR: ${{ steps.download.outputs.source_dir }}
+          ASEPRITE_TAG: ${{ steps.meta.outputs.aseprite_tag }}
+          TAR_NAME: ${{ steps.meta.outputs.tar_name }}
+        run: |
+          set -euo pipefail
+
+          release_dir="work/dist/aseprite-${ASEPRITE_TAG}-debian13-x64"
+          mkdir -p "${release_dir}"
+
+          install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${release_dir}/aseprite"
+          cp -a "${SOURCE_DIR}/build/bin/data" "${release_dir}/data"
+
+          for f in LICENSE LICENSE.txt EULA.txt; do
+            if [ -f "${SOURCE_DIR}/${f}" ]; then
+              cp "${SOURCE_DIR}/${f}" "${release_dir}/${f}"
+              break
+            fi
+          done
+
+          tar -C work/dist -czf "work/dist/${TAR_NAME}" "$(basename "${release_dir}")"
+
+      - name: Package deb
+        env:
+          SOURCE_DIR: ${{ steps.download.outputs.source_dir }}
+          DEB_VERSION: ${{ steps.meta.outputs.deb_version }}
+          DEB_REVISION: ${{ steps.meta.outputs.deb_revision }}
+          DEB_NAME: ${{ steps.meta.outputs.deb_name }}
+        run: |
+          set -euo pipefail
+
+          pkg_root="work/pkgroot"
+          rm -rf "${pkg_root}"
+          mkdir -p \
+            "${pkg_root}/DEBIAN" \
+            "${pkg_root}/usr/lib/aseprite" \
+            "${pkg_root}/usr/bin" \
+            "${pkg_root}/usr/share/doc/aseprite"
+
+          install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${pkg_root}/usr/lib/aseprite/aseprite"
+          cp -a "${SOURCE_DIR}/build/bin/data" "${pkg_root}/usr/lib/aseprite/data"
+
+          cat > "${pkg_root}/usr/bin/aseprite" <<'EOF'
+          #!/bin/sh
+          exec /usr/lib/aseprite/aseprite "$@"
+          EOF
+          chmod 0755 "${pkg_root}/usr/bin/aseprite"
+
+          for f in LICENSE LICENSE.txt EULA.txt; do
+            if [ -f "${SOURCE_DIR}/${f}" ]; then
+              cp "${SOURCE_DIR}/${f}" "${pkg_root}/usr/share/doc/aseprite/copyright"
+              break
+            fi
+          done
+
+          shlibs_output="$(dpkg-shlibdeps -O "${pkg_root}/usr/lib/aseprite/aseprite")"
+          deb_depends="$(printf '%s\n' "${shlibs_output}" | sed -n 's/^shlibs:Depends=//p')"
+          if [ -z "${deb_depends}" ]; then
+            echo "Failed to resolve shared library dependencies with dpkg-shlibdeps." >&2
+            exit 1
+          fi
+
+          installed_size="$(du -ks "${pkg_root}/usr" | cut -f1)"
+
+          cat > "${pkg_root}/DEBIAN/control" <<EOF
+          Package: aseprite
+          Version: ${DEB_VERSION}-${DEB_REVISION}
+          Section: graphics
+          Priority: optional
+          Architecture: amd64
+          Maintainer: GitHub Actions <actions@github.com>
+          Depends: ${deb_depends}
+          Installed-Size: ${installed_size}
+          Description: Aseprite built from upstream release for Debian 13
+           Aseprite Linux binary package built in GitHub Actions.
+          EOF
+
+          dpkg-deb --build --root-owner-group "${pkg_root}" "work/dist/${DEB_NAME}"
+          dpkg-deb -I "work/dist/${DEB_NAME}"
+          dpkg-deb -c "work/dist/${DEB_NAME}"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aseprite-${{ steps.meta.outputs.aseprite_tag }}-debian13-x64
+          path: |
+            work/dist/${{ steps.meta.outputs.tar_name }}
+            work/dist/${{ steps.meta.outputs.deb_name }}
+          if-no-files-found: error
+
+      - name: Publish draft release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          draft: true
+          prerelease: false
+          make_latest: false
+          overwrite_files: true
+          files: |
+            work/dist/${{ steps.meta.outputs.tar_name }}
+            work/dist/${{ steps.meta.outputs.deb_name }}
