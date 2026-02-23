@@ -12,7 +12,7 @@ on:
         default: ""
         type: string
       skia_release_tag:
-        description: "Upstream aseprite/skia release tag"
+        description: "Upstream aseprite/skia release tag or major prefix (e.g. m124)"
         required: false
         default: "m124"
         type: string
@@ -60,8 +60,14 @@ jobs:
           INPUT_DEB_REVISION: ${{ github.event.inputs.deb_revision || '' }}
           INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag || '' }}
           INPUT_RELEASE_NAME: ${{ github.event.inputs.release_name || '' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          curl_common=(-fsSL -H "Accept: application/vnd.github+json")
+          if [ -n "${GH_TOKEN:-}" ]; then
+            curl_common+=(-H "Authorization: Bearer ${GH_TOKEN}")
+          fi
 
           if [ -n "${INPUT_ASEPRITE_TAG}" ]; then
             aseprite_api="https://api.github.com/repos/aseprite/aseprite/releases/tags/${INPUT_ASEPRITE_TAG}"
@@ -69,7 +75,7 @@ jobs:
             aseprite_api="https://api.github.com/repos/aseprite/aseprite/releases/latest"
           fi
 
-          aseprite_json="$(curl -fsSL -H "Accept: application/vnd.github+json" "${aseprite_api}")"
+          aseprite_json="$(curl "${curl_common[@]}" "${aseprite_api}")"
           aseprite_tag="$(printf '%s' "${aseprite_json}" | jq -r '.tag_name // empty')"
           source_zip_url="$(printf '%s' "${aseprite_json}" | jq -r '[.assets[] | select(.name | test("^Aseprite-.*-Source\\.zip$"))][0].browser_download_url // empty')"
 
@@ -83,9 +89,25 @@ jobs:
             exit 1
           fi
 
-          skia_release_tag="${INPUT_SKIA_RELEASE_TAG:-m124}"
-          skia_api="https://api.github.com/repos/aseprite/skia/releases/tags/${skia_release_tag}"
-          skia_json="$(curl -fsSL -H "Accept: application/vnd.github+json" "${skia_api}")"
+          skia_selector="${INPUT_SKIA_RELEASE_TAG:-m124}"
+          skia_api="https://api.github.com/repos/aseprite/skia/releases/tags/${skia_selector}"
+          skia_json=""
+
+          if skia_json="$(curl "${curl_common[@]}" "${skia_api}")"; then
+            skia_release_tag="$(printf '%s' "${skia_json}" | jq -r '.tag_name // empty')"
+          else
+            skia_list_api="https://api.github.com/repos/aseprite/skia/releases?per_page=100"
+            skia_list_json="$(curl "${curl_common[@]}" "${skia_list_api}")"
+            skia_json="$(printf '%s' "${skia_list_json}" | jq -c --arg selector "${skia_selector}" '[.[] | select((.tag_name // "") == $selector or (.tag_name // "" | startswith($selector + "-")))] | first // empty')"
+            skia_release_tag="$(printf '%s' "${skia_json}" | jq -r '.tag_name // empty')"
+          fi
+
+          if [ -z "${skia_release_tag}" ]; then
+            echo "Failed to resolve skia release for selector '${skia_selector}'." >&2
+            echo "Use a full tag (e.g. m124-xxxxxxx) or a valid prefix (e.g. m124)." >&2
+            exit 1
+          fi
+
           skia_zip_url="$(printf '%s' "${skia_json}" | jq -r '[.assets[] | select(.name == "Skia-Linux-Release-x64.zip")][0].browser_download_url // empty')"
 
           if [ -z "${skia_zip_url}" ]; then
