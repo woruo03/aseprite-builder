@@ -167,12 +167,20 @@ jobs:
           curl -fL "${SOURCE_ZIP_URL}" -o work/src/aseprite-source.zip
           unzip -q work/src/aseprite-source.zip -d work/src
 
-          source_dir="$(find work/src -mindepth 1 -maxdepth 1 -type d -name 'Aseprite-*' | head -n 1)"
-          if [ -z "${source_dir}" ]; then
-            source_dir="$(find work/src -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          source_dir=""
+          if [ -f "work/src/CMakeLists.txt" ] && grep -Eqi '^[[:space:]]*project[[:space:]]*\([[:space:]]*aseprite([[:space:])]|$)' "work/src/CMakeLists.txt"; then
+            source_dir="work/src"
+          else
+            while read -r cmake_file; do
+              if grep -Eqi '^[[:space:]]*project[[:space:]]*\([[:space:]]*aseprite([[:space:])]|$)' "${cmake_file}"; then
+                source_dir="$(dirname "${cmake_file}")"
+                break
+              fi
+            done < <(find work/src -mindepth 2 -maxdepth 4 -type f -name CMakeLists.txt | sort)
           fi
+
           if [ -z "${source_dir}" ]; then
-            echo "Failed to locate extracted Aseprite source directory." >&2
+            echo "Failed to locate Aseprite source root (missing project(aseprite) in CMakeLists.txt)." >&2
             exit 1
           fi
 
