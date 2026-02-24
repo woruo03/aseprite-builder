@@ -138,7 +138,7 @@ jobs:
           release_tag="${INPUT_RELEASE_TAG:-${default_release_tag}}"
           release_name="${INPUT_RELEASE_NAME:-${default_release_name}}"
 
-          tar_name="aseprite-${aseprite_tag}-debian13-x64.tar.gz"
+          tar_name="aseprite-${aseprite_tag}-debian13-x64.tar.xz"
           deb_name="aseprite_${deb_version}-${deb_revision}_amd64.deb"
 
           {
@@ -219,7 +219,7 @@ jobs:
           export CXX=clang++
 
           cmake -S "${SOURCE_DIR}" -B "${SOURCE_DIR}/build" -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_FLAGS:STRING=-stdlib=libstdc++ \
             -DCMAKE_EXE_LINKER_FLAGS:STRING=-stdlib=libstdc++ \
             -DLAF_BACKEND=skia \
@@ -229,7 +229,7 @@ jobs:
 
           ninja -C "${SOURCE_DIR}/build" aseprite
 
-      - name: Package tar.gz
+      - name: Package tar.xz
         env:
           SOURCE_DIR: ${{ steps.download.outputs.source_dir }}
           ASEPRITE_TAG: ${{ steps.meta.outputs.aseprite_tag }}
@@ -241,6 +241,7 @@ jobs:
           mkdir -p "${release_dir}"
 
           install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${release_dir}/aseprite"
+          strip --strip-unneeded "${release_dir}/aseprite" || true
           cp -a "${SOURCE_DIR}/build/bin/data" "${release_dir}/data"
 
           for f in LICENSE LICENSE.txt EULA.txt; do
@@ -250,7 +251,7 @@ jobs:
             fi
           done
 
-          tar -C work/dist -czf "work/dist/${TAR_NAME}" "$(basename "${release_dir}")"
+          tar -C work/dist -cJf "work/dist/${TAR_NAME}" "$(basename "${release_dir}")"
 
       - name: Package deb
         env:
@@ -270,6 +271,7 @@ jobs:
             "${pkg_root}/usr/share/doc/aseprite"
 
           install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${pkg_root}/usr/lib/aseprite/aseprite"
+          strip --strip-unneeded "${pkg_root}/usr/lib/aseprite/aseprite" || true
           cp -a "${SOURCE_DIR}/build/bin/data" "${pkg_root}/usr/lib/aseprite/data"
 
           cat > "${pkg_root}/usr/bin/aseprite" <<'EOF'
@@ -322,7 +324,7 @@ jobs:
            Aseprite Linux binary package built in GitHub Actions.
           EOF
 
-          dpkg-deb --build --root-owner-group "${pkg_root}" "work/dist/${DEB_NAME}"
+          dpkg-deb --build --root-owner-group -Zxz -z9 "${pkg_root}" "work/dist/${DEB_NAME}"
           dpkg-deb -I "work/dist/${DEB_NAME}"
           dpkg-deb -c "work/dist/${DEB_NAME}"
 
