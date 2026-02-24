@@ -285,7 +285,22 @@ jobs:
             fi
           done
 
-          shlibs_output="$(dpkg-shlibdeps -O "${pkg_root}/usr/lib/aseprite/aseprite")"
+          debhelper_dir="work/debhelper"
+          bin_path="$(realpath "${pkg_root}/usr/lib/aseprite/aseprite")"
+          mkdir -p "${debhelper_dir}/debian"
+          cat > "${debhelper_dir}/debian/control" <<EOF
+          Source: aseprite
+          Section: graphics
+          Priority: optional
+          Maintainer: GitHub Actions <actions@github.com>
+          Standards-Version: 4.6.2
+
+          Package: aseprite
+          Architecture: amd64
+          Description: Aseprite built from upstream release for Debian 13
+          EOF
+
+          shlibs_output="$(cd "${debhelper_dir}" && dpkg-shlibdeps -O "${bin_path}")"
           deb_depends="$(printf '%s\n' "${shlibs_output}" | sed -n 's/^shlibs:Depends=//p')"
           if [ -z "${deb_depends}" ]; then
             echo "Failed to resolve shared library dependencies with dpkg-shlibdeps." >&2
