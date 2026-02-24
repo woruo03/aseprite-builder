@@ -48,13 +48,16 @@
 1. 构建完成后，进入GitHub Releases页面
 2. 找到草稿（Draft）版本的发布
 3. 下载以下文件之一：
-   - `aseprite_*.deb` - Debian软件包
-   - `aseprite-*-debian13-x64.tar.xz` - 通用Linux归档
+   - `aseprite_*.deb` - Debian软件包（仅amd64架构）
+   - `aseprite-*-debian13-x64.tar.xz` - 通用Linux归档（仅amd64架构）
+
+   **重要提示**：所有构建产物仅支持 **amd64 (x86_64)** 架构，不适用于ARM架构设备（如树莓派）。
 
 #### 5.2 文件格式说明
 
 **`.deb`包**：
 - **适用系统**：Debian 13、Ubuntu 22.04+ 及其衍生发行版
+- **架构限制**：仅支持 **amd64 (x86_64)** 架构，不包含ARM架构（如树莓派）
 - **优点**：
   - 自动安装到系统目录（`/usr/bin/aseprite`）
   - 创建桌面快捷方式和菜单项
@@ -63,6 +66,7 @@
 
 **`.tar.xz`归档**：
 - **适用系统**：任何Linux发行版（包括Arch、Fedora、openSUSE等）
+- **架构限制**：仅支持 **amd64 (x86_64)** 架构，不包含ARM架构
 - **优点**：
   - 无需root权限即可运行
   - 便携式，可放在任意目录
@@ -111,36 +115,6 @@
 4. **打包**：创建`.tar.xz`归档文件和`.deb`软件包
 5. **草稿发布**：将构建产物以草稿形式上传到GitHub Releases
 
-**关键配置**：工作流设置为`draft: true`，确保构建产物不会自动公开发布。
-
-## 项目结构
-
-```
-aseprite-builder/
-├── .github/
-│   └── workflows/
-│       └── aseprite-build-deploy.yml    # GitHub Actions工作流
-├── INSTALL.md                           # 详细安装和构建说明
-└── README.md                            # 项目文档（本文件）
-```
-
-## 依赖项
-
-构建过程需要以下依赖项：
-
-- **构建工具**:
-  - CMake
-  - Ninja构建系统
-  - clang/g++编译器
-  - dpkg-dev（用于打包）
-
-- **系统库**:
-  - libx11-dev, libxcursor-dev, libxi-dev, libxrandr-dev
-  - libgl1-mesa-dev, libfontconfig1-dev
-
-- **运行时依赖**:
-  - 由`dpkg-shlibdeps`自动检测的共享库依赖
-
 ## 法律合规性检查
 
 ### 允许的行为
@@ -155,7 +129,6 @@ aseprite-builder/
 - ❌ 用于商业目的
 - ❌ 修改Aseprite源代码后重新分发
 
-## 故障排除
 
 ### 常见问题
 
@@ -168,8 +141,7 @@ aseprite-builder/
 
 如果在使用过程中遇到问题，请：
 1. 查看GitHub Actions构建日志
-2. 检查[INSTALL.md](INSTALL.md)中的详细说明
-3. 在GitHub Issues中提交问题
+2. 在GitHub Issues中提交问题
 
 ## 相关链接
 
