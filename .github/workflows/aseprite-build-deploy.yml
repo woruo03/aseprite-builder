@@ -268,7 +268,9 @@ jobs:
             "${pkg_root}/DEBIAN" \
             "${pkg_root}/usr/lib/aseprite" \
             "${pkg_root}/usr/bin" \
-            "${pkg_root}/usr/share/doc/aseprite"
+            "${pkg_root}/usr/share/doc/aseprite" \
+            "${pkg_root}/usr/share/applications" \
+            "${pkg_root}/usr/share/pixmaps"
 
           install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${pkg_root}/usr/lib/aseprite/aseprite"
           strip --strip-unneeded "${pkg_root}/usr/lib/aseprite/aseprite" || true
@@ -279,6 +281,44 @@ jobs:
           exec /usr/lib/aseprite/aseprite "$@"
           EOF
           chmod 0755 "${pkg_root}/usr/bin/aseprite"
+
+          icon_source=""
+          for candidate in \
+            "${SOURCE_DIR}/build/bin/data/icons/ase256.png" \
+            "${SOURCE_DIR}/build/bin/data/icons/ase128.png" \
+            "${SOURCE_DIR}/build/bin/data/icons/ase64.png" \
+            "${SOURCE_DIR}/data/icons/ase256.png" \
+            "${SOURCE_DIR}/data/icons/ase128.png" \
+            "${SOURCE_DIR}/data/icons/ase64.png"; do
+            if [ -f "${candidate}" ]; then
+              icon_source="${candidate}"
+              break
+            fi
+          done
+
+          if [ -z "${icon_source}" ]; then
+            icon_source="$(find "${SOURCE_DIR}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) | head -n 1 || true)"
+          fi
+
+          if [ -n "${icon_source}" ]; then
+            install -m 0644 "${icon_source}" "${pkg_root}/usr/share/pixmaps/aseprite.png"
+          else
+            echo "Warning: no Aseprite icon PNG found; desktop icon may not display." >&2
+          fi
+
+          cat > "${pkg_root}/usr/share/applications/aseprite.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Aseprite
+          GenericName=Pixel Art Editor
+          Comment=Animated sprite editor and pixel art tool
+          Exec=/usr/bin/aseprite %F
+          Icon=aseprite
+          Terminal=false
+          Categories=Graphics;2DGraphics;RasterGraphics;
+          StartupWMClass=aseprite
+          EOF
+          chmod 0644 "${pkg_root}/usr/share/applications/aseprite.desktop"
 
           for f in LICENSE LICENSE.txt EULA.txt; do
             if [ -f "${SOURCE_DIR}/${f}" ]; then
