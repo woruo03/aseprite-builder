@@ -417,6 +417,9 @@ jobs:
           set -euo pipefail
           pacman -Sy --noconfirm --needed archlinux-keyring
           pacman -Syu --noconfirm --needed base-devel
+          pacman -S --noconfirm --needed \
+            libx11 libxcursor libxi libxrandr \
+            fontconfig mesa libwebp
 
       - name: Download Debian tar artifact
         uses: actions/download-artifact@v4
