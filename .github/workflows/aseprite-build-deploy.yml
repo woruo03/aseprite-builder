@@ -1,4 +1,4 @@
-name: Build Aseprite for Debian 13
+name: Build Aseprite for Debian 13 and Arch Linux
 
 on:
   push:
@@ -21,6 +21,16 @@ on:
         required: false
         default: "1"
         type: string
+      arch_pkgrel:
+        description: "Arch package release number"
+        required: false
+        default: "1"
+        type: string
+      build_arch_package:
+        description: "Build Arch Linux .pkg.tar.zst package"
+        required: false
+        default: true
+        type: boolean
       release_tag:
         description: "Release tag in this repository (empty = auto)"
         required: false
@@ -36,8 +46,15 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  build-debian-assets:
     runs-on: ubuntu-latest
+    outputs:
+      aseprite_tag: ${{ steps.meta.outputs.aseprite_tag }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+      tar_name: ${{ steps.meta.outputs.tar_name }}
+      deb_name: ${{ steps.meta.outputs.deb_name }}
+      pkgver: ${{ steps.meta.outputs.pkgver }}
 
     steps:
       - name: Checkout repository
@@ -124,6 +141,15 @@ jobs:
             exit 1
           fi
 
+          raw_pkgver="${aseprite_tag#v}"
+          pkgver="$(printf '%s' "${raw_pkgver}" | tr -c 'A-Za-z0-9._' '.')"
+          pkgver="${pkgver#.}"
+          pkgver="${pkgver%.}"
+          if [ -z "${pkgver}" ]; then
+            echo "Failed to compute Arch pkgver from tag ${aseprite_tag}" >&2
+            exit 1
+          fi
+
           deb_revision="${INPUT_DEB_REVISION:-1}"
           deb_revision="$(printf '%s' "${deb_revision}" | tr -c 'A-Za-z0-9+.~' '.')"
           deb_revision="${deb_revision#.}"
@@ -152,6 +178,7 @@ jobs:
             echo "release_name=${release_name}"
             echo "tar_name=${tar_name}"
             echo "deb_name=${deb_name}"
+            echo "pkgver=${pkgver}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Download Aseprite source and Skia
@@ -368,25 +395,216 @@ jobs:
           dpkg-deb -I "work/dist/${DEB_NAME}"
           dpkg-deb -c "work/dist/${DEB_NAME}"
 
-      - name: Upload build artifacts
+      - name: Upload Debian build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: aseprite-${{ steps.meta.outputs.aseprite_tag }}-debian13-x64
+          name: debian-dist-${{ steps.meta.outputs.aseprite_tag }}
           path: |
             work/dist/${{ steps.meta.outputs.tar_name }}
             work/dist/${{ steps.meta.outputs.deb_name }}
           if-no-files-found: error
 
+  build-arch-package:
+    needs: build-debian-assets
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_arch_package == 'true' }}
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Install Arch packaging dependencies
+        run: |
+          set -euo pipefail
+          pacman -Sy --noconfirm --needed archlinux-keyring
+          pacman -Syu --noconfirm --needed base-devel
+
+      - name: Download Debian tar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: debian-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
+          path: work/dist
+
+      - name: Build Arch package
+        id: arch
+        env:
+          TAR_NAME: ${{ needs.build-debian-assets.outputs.tar_name }}
+          PKGVER: ${{ needs.build-debian-assets.outputs.pkgver }}
+          ARCH_PKGREL: ${{ github.event.inputs.arch_pkgrel || '1' }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${ARCH_PKGREL}" =~ [^0-9] || -z "${ARCH_PKGREL}" ]]; then
+            echo "arch_pkgrel must contain only digits." >&2
+            exit 1
+          fi
+
+          mkdir -p work/arch
+          cp "work/dist/${TAR_NAME}" "work/arch/aseprite.tar.xz"
+          tar_sha256="$(sha256sum "work/arch/aseprite.tar.xz" | awk '{print $1}')"
+
+          cat > "work/arch/PKGBUILD" <<EOF
+          pkgname=aseprite-bin
+          pkgver=${PKGVER}
+          pkgrel=${ARCH_PKGREL}
+          pkgdesc='Aseprite binary package built from upstream release'
+          arch=('x86_64')
+          url='https://www.aseprite.org/'
+          license=('custom')
+          provides=('aseprite')
+          conflicts=('aseprite')
+          depends=('glibc' 'gcc-libs' 'libx11' 'libxcursor' 'libxi' 'libxrandr' 'fontconfig' 'mesa' 'libwebp')
+          source=('aseprite.tar.xz')
+          sha256sums=('${tar_sha256}')
+
+          package() {
+            local src_root icon_source license_source
+
+            src_root="\$(find "\${srcdir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+            if [[ -z "\${src_root}" ]]; then
+              echo "Failed to locate extracted Aseprite directory." >&2
+              exit 1
+            fi
+
+            install -Dm755 "\${src_root}/aseprite" "\${pkgdir}/usr/lib/aseprite/aseprite"
+            cp -a "\${src_root}/data" "\${pkgdir}/usr/lib/aseprite/data"
+
+            install -dm755 "\${pkgdir}/usr/bin"
+            printf '%s\n' '#!/bin/sh' 'exec /usr/lib/aseprite/aseprite "__ASE_ARGS__"' > "\${pkgdir}/usr/bin/aseprite"
+            chmod 0755 "\${pkgdir}/usr/bin/aseprite"
+
+            icon_source=""
+            for candidate in \
+              "\${src_root}/data/icons/ase256.png" \
+              "\${src_root}/data/icons/ase128.png" \
+              "\${src_root}/data/icons/ase64.png"; do
+              if [[ -f "\${candidate}" ]]; then
+                icon_source="\${candidate}"
+                break
+              fi
+            done
+            if [[ -z "\${icon_source}" ]]; then
+              icon_source="\$(find "\${src_root}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) | head -n 1 || true)"
+            fi
+            if [[ -z "\${icon_source}" ]]; then
+              echo "Failed to locate Aseprite icon PNG." >&2
+              exit 1
+            fi
+            install -Dm644 "\${icon_source}" "\${pkgdir}/usr/share/pixmaps/aseprite.png"
+
+            install -dm755 "\${pkgdir}/usr/share/applications"
+            printf '%s\n' \
+              '[Desktop Entry]' \
+              'Type=Application' \
+              'Name=Aseprite' \
+              'GenericName=Pixel Art Editor' \
+              'Comment=Animated sprite editor and pixel art tool' \
+              'Exec=/usr/bin/aseprite %F' \
+              'Icon=aseprite' \
+              'Terminal=false' \
+              'Categories=Graphics;2DGraphics;RasterGraphics;' \
+              'StartupWMClass=aseprite' \
+              > "\${pkgdir}/usr/share/applications/aseprite.desktop"
+            chmod 0644 "\${pkgdir}/usr/share/applications/aseprite.desktop"
+
+            license_source=""
+            for candidate in "\${src_root}/LICENSE" "\${src_root}/LICENSE.txt" "\${src_root}/EULA.txt"; do
+              if [[ -f "\${candidate}" ]]; then
+                license_source="\${candidate}"
+                break
+              fi
+            done
+            if [[ -z "\${license_source}" ]]; then
+              echo "Failed to locate upstream license file." >&2
+              exit 1
+            fi
+            install -Dm644 "\${license_source}" "\${pkgdir}/usr/share/licenses/\${pkgname}/LICENSE"
+          }
+          EOF
+          sed -i 's/__ASE_ARGS__/\$@/g' "work/arch/PKGBUILD"
+
+          id builder >/dev/null 2>&1 || useradd -m builder
+          chown -R builder:builder "${GITHUB_WORKSPACE}"
+          runuser -u builder -- bash -lc "cd '${GITHUB_WORKSPACE}/work/arch' && makepkg -f --noconfirm"
+
+          arch_pkg_file="$(find "work/arch" -maxdepth 1 -type f -name 'aseprite-bin-*.pkg.tar.zst' | head -n 1)"
+          if [ -z "${arch_pkg_file}" ]; then
+            echo "Failed to locate generated Arch package." >&2
+            exit 1
+          fi
+
+          cp "${arch_pkg_file}" "work/dist/"
+          arch_pkg_name="$(basename "${arch_pkg_file}")"
+          echo "arch_pkg_name=${arch_pkg_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify Arch package metadata
+        env:
+          ARCH_PKG_NAME: ${{ steps.arch.outputs.arch_pkg_name }}
+        run: |
+          set -euo pipefail
+          pkg_path="work/dist/${ARCH_PKG_NAME}"
+
+          pacman -Qp "${pkg_path}"
+          listing="$(pacman -Qlp "${pkg_path}")"
+
+          printf '%s\n' "${listing}" | grep -F ' /usr/bin/aseprite' >/dev/null
+          printf '%s\n' "${listing}" | grep -F ' /usr/lib/aseprite/aseprite' >/dev/null
+          printf '%s\n' "${listing}" | grep -F ' /usr/lib/aseprite/data/' >/dev/null
+          printf '%s\n' "${listing}" | grep -F ' /usr/share/applications/aseprite.desktop' >/dev/null
+          printf '%s\n' "${listing}" | grep -F ' /usr/share/pixmaps/aseprite.png' >/dev/null
+          printf '%s\n' "${listing}" | grep -F ' /usr/share/licenses/aseprite-bin/LICENSE' >/dev/null
+
+      - name: Upload Arch package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
+          path: work/dist/${{ steps.arch.outputs.arch_pkg_name }}
+          if-no-files-found: error
+
+  publish-draft-release:
+    needs:
+      - build-debian-assets
+      - build-arch-package
+    if: ${{ always() && needs.build-debian-assets.result == 'success' && (needs.build-arch-package.result == 'success' || needs.build-arch-package.result == 'skipped') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Debian artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: debian-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
+          path: work/release-dist
+
+      - name: Download Arch artifacts
+        if: ${{ needs.build-arch-package.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: arch-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
+          path: work/release-dist
+
+      - name: Collect release files
+        id: files
+        run: |
+          set -euo pipefail
+          mapfile -t release_files < <(find "work/release-dist" -maxdepth 1 -type f | sort)
+          if [ "${#release_files[@]}" -eq 0 ]; then
+            echo "No release assets found." >&2
+            exit 1
+          fi
+
+          {
+            echo "files<<EOF"
+            printf '%s\n' "${release_files[@]}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Publish draft release assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.release_tag }}
-          name: ${{ steps.meta.outputs.release_name }}
+          tag_name: ${{ needs.build-debian-assets.outputs.release_tag }}
+          name: ${{ needs.build-debian-assets.outputs.release_name }}
           target_commitish: ${{ github.sha }}
           draft: true
           prerelease: false
           make_latest: false
           overwrite_files: true
-          files: |
-            work/dist/${{ steps.meta.outputs.tar_name }}
-            work/dist/${{ steps.meta.outputs.deb_name }}
+          files: ${{ steps.files.outputs.files }}

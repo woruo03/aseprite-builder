@@ -1,6 +1,6 @@
-# Aseprite Builder for Debian 13
+# Aseprite Builder for Debian 13 + Arch Linux
 
-[![Build Aseprite for Debian 13](https://github.com/woruo03/aseprite-builder/actions/workflows/aseprite-build-deploy.yml/badge.svg)](https://github.com/woruo03/aseprite-builder/actions/workflows/aseprite-build-deploy.yml)
+[![Build Aseprite for Debian 13 and Arch Linux](https://github.com/woruo03/aseprite-builder/actions/workflows/aseprite-build-deploy.yml/badge.svg)](https://github.com/woruo03/aseprite-builder/actions/workflows/aseprite-build-deploy.yml)
 
 ## ⚠️ 重要法律声明
 
@@ -50,6 +50,7 @@
 3. 下载以下文件之一：
    - `aseprite_*.deb` - Debian软件包（仅amd64架构）
    - `aseprite-*-debian13-x64.tar.xz` - 通用Linux归档（仅amd64架构）
+   - `aseprite-bin-*-x86_64.pkg.tar.zst` - Arch Linux软件包（仅x86_64架构）
 
    **重要提示**：所有构建产物仅支持 **amd64 (x86_64)** 架构，不适用于ARM架构设备（如树莓派）。
 
@@ -73,16 +74,27 @@
   - 包含所有运行时数据文件
   - 不修改系统文件
 
+**`.pkg.tar.zst`包（Arch Linux）**：
+- **适用系统**：Arch Linux及其衍生发行版
+- **架构限制**：仅支持 **x86_64** 架构
+- **安装方式**：
+  - `sudo pacman -U ./aseprite-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst`
+  - `paru -U ./aseprite-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst`
+- **Hyprland说明**：
+  - Aseprite依赖X11运行栈，Wayland桌面（含Hyprland）通常通过XWayland运行
+  - 请确保系统已安装`xorg-xwayland`
+  - 若启动器点击无响应，先在终端运行`aseprite --version`排查运行时依赖
+
 ## 项目概述
 
-这是一个自动化构建工具，用于在Debian 13系统上构建[Aseprite](https://www.aseprite.org/)像素艺术编辑器。项目通过GitHub Actions工作流自动从上游Aseprite仓库获取最新版本源代码，编译并打包为`.tar.xz`归档文件和`.deb`软件包。
+这是一个自动化构建工具，用于在Debian 13环境中构建[Aseprite](https://www.aseprite.org/)像素艺术编辑器，并发布多种Linux安装格式。项目通过GitHub Actions工作流自动从上游Aseprite仓库获取最新版本源代码，编译并打包为`.tar.xz`归档、`.deb`软件包和Arch Linux的`.pkg.tar.zst`软件包。
 
 ## 功能特性
 
 - **安全构建**：构建产物自动保持草稿状态，避免意外公开发布
 - **自动构建**：自动检测Aseprite最新版本并下载源代码
 - **依赖管理**：自动下载并配置Skia图形库（`aseprite-m124`分支）
-- **多格式打包**：生成适用于Debian 13的`.tar.xz`和`.deb`包
+- **多格式打包**：生成`.tar.xz`、`.deb`和Arch Linux可用的`.pkg.tar.zst`包
 - **桌面集成**：自动创建桌面快捷方式、图标和应用程序菜单项
 - **GitHub Actions集成**：支持标签触发和手动触发构建
 
@@ -102,6 +114,8 @@
 | `aseprite_tag` | 上游Aseprite标签（空值表示最新版本） | "" |
 | `skia_release_tag` | 上游aseprite/skia发布标签或主要前缀（如m124） | "m124" |
 | `deb_revision` | Debian修订后缀 | "1" |
+| `arch_pkgrel` | Arch包版本修订号（pkgrel） | "1" |
+| `build_arch_package` | 是否构建Arch Linux `.pkg.tar.zst` 包 | `true` |
 | `release_tag` | 本仓库中的发布标签（空值表示自动生成） | "" |
 | `release_name` | 本仓库中的发布名称（空值表示自动生成） | "" |
 
@@ -112,8 +126,9 @@
 1. **解析上游元数据**：获取Aseprite和Skia的最新版本信息
 2. **下载源代码**：下载Aseprite源代码和预编译的Skia库
 3. **构建Aseprite**：使用CMake和Ninja编译Aseprite
-4. **打包**：创建`.tar.xz`归档文件和`.deb`软件包
-5. **草稿发布**：将构建产物以草稿形式上传到GitHub Releases
+4. **Debian打包**：创建`.tar.xz`归档文件和`.deb`软件包
+5. **Arch打包（可选）**：生成`aseprite-bin`格式的`.pkg.tar.zst`包
+6. **草稿发布**：汇总所有构建产物并以草稿形式上传到GitHub Releases
 
 ## 法律合规性检查
 
@@ -153,5 +168,5 @@
 
 ---
 
-*最后更新: 2026-02-24*
+*最后更新: 2026-02-27*
 *重要提示：请严格遵守上述使用限制，尊重软件版权和许可条款*
