@@ -527,7 +527,7 @@ jobs:
 
           id builder >/dev/null 2>&1 || useradd -m builder
           chown -R builder:builder "${GITHUB_WORKSPACE}"
-          runuser -u builder -- bash -lc "cd '${GITHUB_WORKSPACE}/work/arch' && makepkg -f --noconfirm"
+          runuser -u builder -- bash -lc "cd '${GITHUB_WORKSPACE}/work/arch' && makepkg -f --noconfirm --nodeps"
 
           arch_pkg_file="$(find "work/arch" -maxdepth 1 -type f -name 'aseprite-bin-*.pkg.tar.zst' | head -n 1)"
           if [ -z "${arch_pkg_file}" ]; then

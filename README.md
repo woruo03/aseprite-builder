@@ -128,6 +128,7 @@
 3. **构建Aseprite**：使用CMake和Ninja编译Aseprite
 4. **Debian打包**：创建`.tar.xz`归档文件和`.deb`软件包
 5. **Arch打包（可选）**：生成`aseprite-bin`格式的`.pkg.tar.zst`包
+   - Arch打包为二进制重打包流程，`makepkg`使用`--nodeps`避免在CI容器中校验运行时依赖是否已安装
 6. **草稿发布**：汇总所有构建产物并以草稿形式上传到GitHub Releases
 
 ## 法律合规性检查
