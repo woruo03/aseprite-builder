@@ -21,6 +21,12 @@
 
 本项目代码基于MIT许可证分发。
 
+## 汉化包获取
+
+Aseprite 提供了官方中文翻译，可以通过以下方式获取：
+
+- **Weblate 翻译平台**：https://hosted.weblate.org/projects/aseprite/-/zh_Hans/
+
 ## 使用方式（正确流程）
 
 ### 步骤1：Fork仓库
