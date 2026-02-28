@@ -48,8 +48,8 @@
 1. 构建完成后，进入GitHub Releases页面
 2. 找到草稿（Draft）版本的发布
 3. 下载以下文件之一：
-   - `aseprite_*.deb` - Debian软件包（仅amd64架构）
    - `aseprite-*-debian13-x64.tar.xz` - 通用Linux归档（仅amd64架构）
+   - `aseprite_*.deb` - Debian软件包（仅amd64架构）
    - `aseprite-bin-*-x86_64.pkg.tar.zst` - Arch Linux软件包（仅x86_64架构）
 
    **重要提示**：所有构建产物仅支持 **amd64 (x86_64)** 架构，不适用于ARM架构设备（如树莓派）。
