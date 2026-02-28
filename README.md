@@ -59,6 +59,10 @@
 **`.tar.xz`归档**：
 - **适用系统**：任何Linux发行版（包括Arch、Fedora、openSUSE等）
 - **架构限制**：仅支持 **amd64 (x86_64)** 架构，不包含ARM架构
+- **桌面环境支持**：
+  - **完全支持**：所有符合FreeDesktop标准的桌面环境，包括GNOME、KDE Plasma、XFCE、MATE、LXDE/LXQt、Cinnamon、Budgie等
+  - **Wayland桌面**：通过XWayland支持（需安装`xorg-xwayland`），包括GNOME Wayland、KDE Plasma Wayland、Hyprland、Sway等
+  - **手动桌面集成**：需要手动创建`.desktop`文件或使用启动器脚本
 - **优点**：
   - 无需root权限即可运行
   - 便携式，可放在任意目录
@@ -68,6 +72,10 @@
 **`.deb`包**：
 - **适用系统**：Debian 13、Ubuntu 22.04+ 及其衍生发行版
 - **架构限制**：仅支持 **amd64 (x86_64)** 架构，不包含ARM架构（如树莓派）
+- **桌面环境支持**：
+  - **完全支持**：所有符合FreeDesktop标准的桌面环境，包括GNOME、KDE Plasma、XFCE、MATE、LXDE/LXQt、Cinnamon、Budgie等
+  - **Wayland桌面**：通过XWayland支持（需安装`xorg-xwayland`），包括GNOME Wayland、KDE Plasma Wayland、Hyprland、Sway等
+  - **自动桌面集成**：包含`.desktop`文件和图标，自动出现在应用程序菜单中
 - **优点**：
   - 自动安装到系统目录（`/usr/bin/aseprite`）
   - 创建桌面快捷方式和菜单项
@@ -77,11 +85,15 @@
 **`.pkg.tar.zst`包**：
 - **适用系统**：Arch Linux及其衍生发行版
 - **架构限制**：仅支持 **x86_64** 架构
+- **桌面环境支持**：
+  - **完全支持**：所有符合FreeDesktop标准的桌面环境，包括GNOME、KDE Plasma、XFCE、MATE、LXDE/LXQt、Cinnamon、Budgie等
+  - **Wayland桌面**：通过XWayland支持（需安装`xorg-xwayland`），包括GNOME Wayland、KDE Plasma Wayland、Hyprland、Sway等
+  - **桌面集成**：包含`.desktop`文件和图标，自动出现在应用程序菜单中
 - **安装方式**：
   - `sudo pacman -U ./aseprite-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst`
   - `paru -U ./aseprite-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst`
-- **Hyprland说明**：
-  - Aseprite依赖X11运行栈，Wayland桌面（含Hyprland）通常通过XWayland运行
+- **Wayland桌面注意事项**：
+  - Aseprite依赖X11运行栈，Wayland桌面通常通过XWayland运行
   - 请确保系统已安装`xorg-xwayland`
   - 若启动器点击无响应，先在终端运行`aseprite --version`排查运行时依赖
 
