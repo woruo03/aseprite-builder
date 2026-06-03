@@ -63,109 +63,36 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            g++ clang cmake ninja-build \
-            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libgl1-mesa-dev libfontconfig1-dev \
-            curl jq unzip tar dpkg-dev
+          sudo apt-get install -y g++ clang cmake ninja-build libx11-dev libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev libfontconfig1-dev curl jq unzip tar dpkg-dev
 
       - name: Resolve upstream metadata
         id: meta
         env:
-          INPUT_ASEPRITE_TAG: ${{ github.event.inputs.aseprite_tag || '' }}
-          INPUT_SKIA_RELEASE_TAG: ${{ github.event.inputs.skia_release_tag || '' }}
-          INPUT_DEB_REVISION: ${{ github.event.inputs.deb_revision || '' }}
-          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag || '' }}
-          INPUT_RELEASE_NAME: ${{ github.event.inputs.release_name || '' }}
+          INPUT_ASEPRITE_TAG: ${{ github.event.inputs.aseprite_tag }}
+          INPUT_SKIA_RELEASE_TAG: ${{ github.event.inputs.skia_release_tag || 'm124' }}
+          INPUT_DEB_REVISION: ${{ github.event.inputs.deb_revision || '1' }}
+          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          INPUT_RELEASE_NAME: ${{ github.event.inputs.release_name }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          curl_common=(-fsSL -H "Accept: application/vnd.github+json")
-          if [ -n "${GH_TOKEN:-}" ]; then
-            curl_common+=(-H "Authorization: Bearer ${GH_TOKEN}")
-          fi
+          api_call() { curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}" "$@"; }
+          clean_version() { printf '%s' "${1#v}" | tr -c "${2}" '.' | sed 's/^\.//;s/\.$//' ; }
 
-          if [ -n "${INPUT_ASEPRITE_TAG}" ]; then
-            aseprite_api="https://api.github.com/repos/aseprite/aseprite/releases/tags/${INPUT_ASEPRITE_TAG}"
-          else
-            aseprite_api="https://api.github.com/repos/aseprite/aseprite/releases/latest"
-          fi
+          aseprite_json="$(api_call "https://api.github.com/repos/aseprite/aseprite/releases/${INPUT_ASEPRITE_TAG:+tags/$INPUT_ASEPRITE_TAG}/latest")"
+          aseprite_tag="$(jq -r '.tag_name' <<<"${aseprite_json}")" && [ -n "${aseprite_tag}" ] || { echo "Failed to resolve Aseprite tag" >&2; exit 1; }
+          source_zip_url="$(jq -r '[.assets[] | select(.name | test("Aseprite-.*-Source\\.zip"))][0].browser_download_url' <<<"${aseprite_json}")" && [ -n "${source_zip_url}" ] || { echo "Failed to find source zip" >&2; exit 1; }
 
-          aseprite_json="$(curl "${curl_common[@]}" "${aseprite_api}")"
-          aseprite_tag="$(printf '%s' "${aseprite_json}" | jq -r '.tag_name // empty')"
-          source_zip_url="$(printf '%s' "${aseprite_json}" | jq -r '[.assets[] | select(.name | test("^Aseprite-.*-Source\\.zip$"))][0].browser_download_url // empty')"
+          skia_json="$(api_call "https://api.github.com/repos/aseprite/skia/releases/tags/${INPUT_SKIA_RELEASE_TAG}" 2>/dev/null)" || {
+            skia_json="$(api_call "https://api.github.com/repos/aseprite/skia/releases?per_page=100" | jq -c --arg sel "${INPUT_SKIA_RELEASE_TAG}" '[.[] | select((.tag_name // "") == $sel or (.tag_name // "" | startswith($sel + "-")))] | first')"
+          }
+          skia_release_tag="$(jq -r '.tag_name' <<<"${skia_json}")" && [ -n "${skia_release_tag}" ] || { echo "Failed to resolve skia tag" >&2; exit 1; }
+          skia_zip_url="$(jq -r '[.assets[] | select(.name == "Skia-Linux-Release-x64.zip")][0].browser_download_url' <<<"${skia_json}")" && [ -n "${skia_zip_url}" ] || { echo "Failed to find skia zip" >&2; exit 1; }
 
-          if [ -z "${aseprite_tag}" ]; then
-            echo "Failed to resolve Aseprite release tag from: ${aseprite_api}" >&2
-            exit 1
-          fi
-
-          if [ -z "${source_zip_url}" ]; then
-            echo "Failed to find Aseprite source zip asset (Aseprite-*-Source.zip)." >&2
-            exit 1
-          fi
-
-          skia_selector="${INPUT_SKIA_RELEASE_TAG:-m124}"
-          skia_api="https://api.github.com/repos/aseprite/skia/releases/tags/${skia_selector}"
-          skia_json=""
-
-          if skia_json="$(curl "${curl_common[@]}" "${skia_api}")"; then
-            skia_release_tag="$(printf '%s' "${skia_json}" | jq -r '.tag_name // empty')"
-          else
-            skia_list_api="https://api.github.com/repos/aseprite/skia/releases?per_page=100"
-            skia_list_json="$(curl "${curl_common[@]}" "${skia_list_api}")"
-            skia_json="$(printf '%s' "${skia_list_json}" | jq -c --arg selector "${skia_selector}" '[.[] | select((.tag_name // "") == $selector or (.tag_name // "" | startswith($selector + "-")))] | first // empty')"
-            skia_release_tag="$(printf '%s' "${skia_json}" | jq -r '.tag_name // empty')"
-          fi
-
-          if [ -z "${skia_release_tag}" ]; then
-            echo "Failed to resolve skia release for selector '${skia_selector}'." >&2
-            echo "Use a full tag (e.g. m124-xxxxxxx) or a valid prefix (e.g. m124)." >&2
-            exit 1
-          fi
-
-          skia_zip_url="$(printf '%s' "${skia_json}" | jq -r '[.assets[] | select(.name == "Skia-Linux-Release-x64.zip")][0].browser_download_url // empty')"
-
-          if [ -z "${skia_zip_url}" ]; then
-            echo "Failed to find Skia asset Skia-Linux-Release-x64.zip for tag ${skia_release_tag}." >&2
-            exit 1
-          fi
-
-          raw_deb_version="${aseprite_tag#v}"
-          deb_version="$(printf '%s' "${raw_deb_version}" | tr -c 'A-Za-z0-9.+:~' '.')"
-          deb_version="${deb_version#.}"
-          deb_version="${deb_version%.}"
-          if [ -z "${deb_version}" ]; then
-            echo "Failed to compute deb version from tag ${aseprite_tag}" >&2
-            exit 1
-          fi
-
-          raw_pkgver="${aseprite_tag#v}"
-          pkgver="$(printf '%s' "${raw_pkgver}" | tr -c 'A-Za-z0-9._' '.')"
-          pkgver="${pkgver#.}"
-          pkgver="${pkgver%.}"
-          if [ -z "${pkgver}" ]; then
-            echo "Failed to compute Arch pkgver from tag ${aseprite_tag}" >&2
-            exit 1
-          fi
-
-          deb_revision="${INPUT_DEB_REVISION:-1}"
-          deb_revision="$(printf '%s' "${deb_revision}" | tr -c 'A-Za-z0-9+.~' '.')"
-          deb_revision="${deb_revision#.}"
-          deb_revision="${deb_revision%.}"
-          if [ -z "${deb_revision}" ]; then
-            echo "Invalid deb revision" >&2
-            exit 1
-          fi
-
-          default_release_tag="aseprite-${aseprite_tag}-debian13-x64"
-          default_release_name="Aseprite ${aseprite_tag} for Debian 13 (x64)"
-          release_tag="${INPUT_RELEASE_TAG:-${default_release_tag}}"
-          release_name="${INPUT_RELEASE_NAME:-${default_release_name}}"
-
-          tar_name="aseprite-${aseprite_tag}-debian13-x64.tar.xz"
-          deb_name="aseprite_${deb_version}-${deb_revision}_amd64.deb"
+          deb_version="$(clean_version "${aseprite_tag}" 'A-Za-z0-9.+:~')" && [ -n "${deb_version}" ] || { echo "Failed to compute deb version" >&2; exit 1; }
+          pkgver="$(clean_version "${aseprite_tag}" 'A-Za-z0-9._')" && [ -n "${pkgver}" ] || { echo "Failed to compute pkgver" >&2; exit 1; }
+          deb_revision="$(clean_version "${INPUT_DEB_REVISION}" 'A-Za-z0-9+.~')" && [ -n "${deb_revision}" ] || { echo "Invalid deb revision" >&2; exit 1; }
 
           {
             echo "aseprite_tag=${aseprite_tag}"
@@ -174,10 +101,10 @@ jobs:
             echo "skia_zip_url=${skia_zip_url}"
             echo "deb_version=${deb_version}"
             echo "deb_revision=${deb_revision}"
-            echo "release_tag=${release_tag}"
-            echo "release_name=${release_name}"
-            echo "tar_name=${tar_name}"
-            echo "deb_name=${deb_name}"
+            echo "release_tag=${INPUT_RELEASE_TAG:-aseprite-${aseprite_tag}-debian13-x64}"
+            echo "release_name=${INPUT_RELEASE_NAME:-Aseprite ${aseprite_tag} for Debian 13 (x64)}"
+            echo "tar_name=aseprite-${aseprite_tag}-debian13-x64.tar.xz"
+            echo "deb_name=aseprite_${deb_version}-${deb_revision}_amd64.deb"
             echo "pkgver=${pkgver}"
           } >> "${GITHUB_OUTPUT}"
 
