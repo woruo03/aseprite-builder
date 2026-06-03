@@ -49,12 +49,12 @@ jobs:
   build-debian-assets:
     runs-on: ubuntu-latest
     outputs:
-      aseprite_tag: ${{ steps.meta.outputs.aseprite_tag }}
-      release_tag: ${{ steps.meta.outputs.release_tag }}
-      release_name: ${{ steps.meta.outputs.release_name }}
-      tar_name: ${{ steps.meta.outputs.tar_name }}
-      deb_name: ${{ steps.meta.outputs.deb_name }}
-      pkgver: ${{ steps.meta.outputs.pkgver }}
+      aseprite_tag: ${{ steps.metadata.outputs.aseprite_tag }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      release_name: ${{ steps.metadata.outputs.release_name }}
+      archive_name: ${{ steps.metadata.outputs.archive_name }}
+      deb_package_name: ${{ steps.metadata.outputs.deb_package_name }}
+      pkgver: ${{ steps.metadata.outputs.pkgver }}
 
     steps:
       - name: Checkout repository
@@ -66,7 +66,7 @@ jobs:
           sudo apt-get install -y g++ clang cmake ninja-build libx11-dev libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev libfontconfig1-dev curl jq unzip tar dpkg-dev
 
       - name: Resolve upstream metadata
-        id: meta
+        id: metadata
         env:
           INPUT_ASEPRITE_TAG: ${{ github.event.inputs.aseprite_tag }}
           INPUT_SKIA_RELEASE_TAG: ${{ github.event.inputs.skia_release_tag || 'm124' }}
@@ -105,16 +105,16 @@ jobs:
             echo "deb_revision=${deb_revision}"
             echo "release_tag=${INPUT_RELEASE_TAG:-aseprite-${aseprite_tag}-debian13-x64}"
             echo "release_name=${INPUT_RELEASE_NAME:-Aseprite ${aseprite_tag} for Debian 13 (x64)}"
-            echo "tar_name=aseprite-${aseprite_tag}-debian13-x64.tar.xz"
-            echo "deb_name=aseprite_${deb_version}-${deb_revision}_amd64.deb"
+            echo "archive_name=aseprite-${aseprite_tag}-debian13-x64.tar.xz"
+            echo "deb_package_name=aseprite_${deb_version}-${deb_revision}_amd64.deb"
             echo "pkgver=${pkgver}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Download Aseprite source and Skia
         id: download
         env:
-          SOURCE_ZIP_URL: ${{ steps.meta.outputs.source_zip_url }}
-          SKIA_ZIP_URL: ${{ steps.meta.outputs.skia_zip_url }}
+          SOURCE_ZIP_URL: ${{ steps.metadata.outputs.source_zip_url }}
+          SKIA_ZIP_URL: ${{ steps.metadata.outputs.skia_zip_url }}
         run: |
           set -euo pipefail
           mkdir -p work/{src,deps/skia}
@@ -167,11 +167,11 @@ jobs:
       - name: Package tar.xz and deb
         env:
           SOURCE_DIR: ${{ steps.download.outputs.source_dir }}
-          ASEPRITE_TAG: ${{ steps.meta.outputs.aseprite_tag }}
-          TAR_NAME: ${{ steps.meta.outputs.tar_name }}
-          DEB_VERSION: ${{ steps.meta.outputs.deb_version }}
-          DEB_REVISION: ${{ steps.meta.outputs.deb_revision }}
-          DEB_NAME: ${{ steps.meta.outputs.deb_name }}
+          ASEPRITE_TAG: ${{ steps.metadata.outputs.aseprite_tag }}
+          ARCHIVE_NAME: ${{ steps.metadata.outputs.archive_name }}
+          DEB_VERSION: ${{ steps.metadata.outputs.deb_version }}
+          DEB_REVISION: ${{ steps.metadata.outputs.deb_revision }}
+          DEB_PACKAGE_NAME: ${{ steps.metadata.outputs.deb_package_name }}
         run: |
           set -euo pipefail
 
@@ -184,7 +184,7 @@ jobs:
           strip --strip-unneeded "${release_dir}/aseprite" || true
           cp -a "${SOURCE_DIR}/build/bin/data" "${release_dir}/data"
           copy_asset "$(find_file "${SOURCE_DIR}/LICENSE" "${SOURCE_DIR}/LICENSE.txt" "${SOURCE_DIR}/EULA.txt")" "${release_dir}/LICENSE"
-          tar -C work/dist -cJf "work/dist/${TAR_NAME}" "$(basename "${release_dir}")"
+          tar -C work/dist -cJf "work/dist/${ARCHIVE_NAME}" "$(basename "${release_dir}")"
 
           # Create deb package
           pkg_root="work/pkgroot"
@@ -254,16 +254,16 @@ jobs:
            Aseprite Linux binary package built in GitHub Actions.
           EOF
 
-          dpkg-deb --build --root-owner-group -Zxz -z9 "${pkg_root}" "work/dist/${DEB_NAME}"
-          dpkg-deb -I "work/dist/${DEB_NAME}"
+          dpkg-deb --build --root-owner-group -Zxz -z9 "${pkg_root}" "work/dist/${DEB_PACKAGE_NAME}"
+          dpkg-deb -I "work/dist/${DEB_PACKAGE_NAME}"
 
       - name: Upload Debian build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: debian-dist-${{ steps.meta.outputs.aseprite_tag }}
+          name: aseprite-debian-${{ steps.metadata.outputs.aseprite_tag }}
           path: |
-            work/dist/${{ steps.meta.outputs.tar_name }}
-            work/dist/${{ steps.meta.outputs.deb_name }}
+            work/dist/${{ steps.metadata.outputs.archive_name }}
+            work/dist/${{ steps.metadata.outputs.deb_package_name }}
           if-no-files-found: error
 
   build-arch-package:
@@ -286,13 +286,13 @@ jobs:
       - name: Download Debian tar artifact
         uses: actions/download-artifact@v4
         with:
-          name: debian-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
+          name: aseprite-debian-${{ needs.build-debian-assets.outputs.aseprite_tag }}
           path: work/dist
 
       - name: Build Arch package
         id: arch
         env:
-          TAR_NAME: ${{ needs.build-debian-assets.outputs.tar_name }}
+          ARCHIVE_NAME: ${{ needs.build-debian-assets.outputs.archive_name }}
           PKGVER: ${{ needs.build-debian-assets.outputs.pkgver }}
           ARCH_PKGREL: ${{ github.event.inputs.arch_pkgrel || '1' }}
         run: |
@@ -300,7 +300,7 @@ jobs:
           [[ "${ARCH_PKGREL}" =~ ^[0-9]+$ ]] || { echo "arch_pkgrel must contain only digits" >&2; exit 1; }
 
           mkdir -p work/arch
-          cp "work/dist/${TAR_NAME}" "work/arch/aseprite.tar.xz"
+          cp "work/dist/${ARCHIVE_NAME}" "work/arch/aseprite.tar.xz"
           tar_sha256="$(sha256sum "work/arch/aseprite.tar.xz" | awk '{print $1}')"
 
           cat > "work/arch/PKGBUILD" <<'EOFPKG'
@@ -379,7 +379,7 @@ jobs:
       - name: Upload Arch package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: arch-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
+          name: aseprite-archlinux-${{ needs.build-debian-assets.outputs.aseprite_tag }}
           path: work/dist/${{ steps.arch.outputs.arch_pkg_name }}
           if-no-files-found: error
 
@@ -390,13 +390,13 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: debian-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
+          name: aseprite-debian-${{ needs.build-debian-assets.outputs.aseprite_tag }}
           path: work/release-dist
 
       - uses: actions/download-artifact@v4
         if: needs.build-arch-package.result == 'success'
         with:
-          name: arch-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
+          name: aseprite-archlinux-${{ needs.build-debian-assets.outputs.aseprite_tag }}
           path: work/release-dist
 
       - uses: softprops/action-gh-release@v2
