@@ -377,44 +377,22 @@ jobs:
           if-no-files-found: error
 
   publish-draft-release:
-    needs:
-      - build-debian-assets
-      - build-arch-package
+    needs: [build-debian-assets, build-arch-package]
     if: ${{ always() && needs.build-debian-assets.result == 'success' && (needs.build-arch-package.result == 'success' || needs.build-arch-package.result == 'skipped') }}
     runs-on: ubuntu-latest
-
     steps:
-      - name: Download Debian artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: debian-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
           path: work/release-dist
 
-      - name: Download Arch artifacts
-        if: ${{ needs.build-arch-package.result == 'success' }}
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
+        if: needs.build-arch-package.result == 'success'
         with:
           name: arch-dist-${{ needs.build-debian-assets.outputs.aseprite_tag }}
           path: work/release-dist
 
-      - name: Collect release files
-        id: files
-        run: |
-          set -euo pipefail
-          mapfile -t release_files < <(find "work/release-dist" -maxdepth 1 -type f | sort)
-          if [ "${#release_files[@]}" -eq 0 ]; then
-            echo "No release assets found." >&2
-            exit 1
-          fi
-
-          {
-            echo "files<<EOF"
-            printf '%s\n' "${release_files[@]}"
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Publish draft release assets
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.build-debian-assets.outputs.release_tag }}
           name: ${{ needs.build-debian-assets.outputs.release_name }}
@@ -423,4 +401,4 @@ jobs:
           prerelease: false
           make_latest: false
           overwrite_files: true
-          files: ${{ steps.files.outputs.files }}
+          files: work/release-dist/*
