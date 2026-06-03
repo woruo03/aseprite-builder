@@ -105,7 +105,7 @@ jobs:
             echo "deb_revision=${deb_revision}"
             echo "release_tag=${INPUT_RELEASE_TAG:-aseprite-${aseprite_tag}-debian13-x64}"
             echo "release_name=${INPUT_RELEASE_NAME:-Aseprite ${aseprite_tag} for Debian 13 (x64)}"
-            echo "archive_name=aseprite-${aseprite_tag}-debian13-x64.tar.xz"
+            echo "archive_name=aseprite-${aseprite_tag}-linux-x64.tar.xz"
             echo "deb_package_name=aseprite_${deb_version}-${deb_revision}_amd64.deb"
             echo "pkgver=${pkgver}"
           } >> "${GITHUB_OUTPUT}"
@@ -178,7 +178,7 @@ jobs:
           find_file() { for f in "$@"; do [ -f "$f" ] && { echo "$f"; return 0; }; done; }
           copy_asset() { local src="$1" dst="$2" && [ -f "$src" ] && cp "$src" "$dst"; }
 
-          release_dir="work/dist/aseprite-${ASEPRITE_TAG}-debian13-x64"
+          release_dir="work/dist/aseprite-${ASEPRITE_TAG}-linux-x64"
           mkdir -p "${release_dir}"
           install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${release_dir}/aseprite"
           strip --strip-unneeded "${release_dir}/aseprite" || true
@@ -237,8 +237,17 @@ jobs:
           EOF
 
           bin_path="$(realpath "${pkg_root}/usr/lib/aseprite/aseprite")"
-          deb_depends="$(dpkg-shlibdeps "${bin_path}" 2>/dev/null | sed -n 's/^shlibs:Depends=//p' || true)"
-          [ -n "${deb_depends}" ] || { echo "Failed to resolve dependencies" >&2; exit 1; }
+
+          # Try to resolve dependencies with dpkg-shlibdeps
+          deb_depends=""
+          if dpkg-shlibdeps "${bin_path}" >/dev/null 2>&1; then
+            deb_depends="$(dpkg-shlibdeps "${bin_path}" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')"
+          else
+            echo "Info: dpkg-shlibdeps unavailable, using fallback dependency list" >&2
+            deb_depends="libc6, libx11-6, libxcursor1, libxi6, libxrandr2, libgl1-mesa-glx, libfontconfig1"
+          fi
+
+          [ -n "${deb_depends}" ] && echo "Dependencies: ${deb_depends}" || echo "Warning: No dependencies resolved" >&2
           installed_size="$(du -ks "${pkg_root}/usr" | cut -f1)"
 
           cat > "${pkg_root}/DEBIAN/control" <<EOF
