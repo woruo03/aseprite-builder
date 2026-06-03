@@ -291,20 +291,18 @@ jobs:
           ARCH_PKGREL: ${{ github.event.inputs.arch_pkgrel || '1' }}
         run: |
           set -euo pipefail
-
-          if [[ "${ARCH_PKGREL}" =~ [^0-9] || -z "${ARCH_PKGREL}" ]]; then
-            echo "arch_pkgrel must contain only digits." >&2
-            exit 1
-          fi
+          [[ "${ARCH_PKGREL}" =~ ^[0-9]+$ ]] || { echo "arch_pkgrel must contain only digits" >&2; exit 1; }
 
           mkdir -p work/arch
           cp "work/dist/${TAR_NAME}" "work/arch/aseprite.tar.xz"
           tar_sha256="$(sha256sum "work/arch/aseprite.tar.xz" | awk '{print $1}')"
 
-          cat > "work/arch/PKGBUILD" <<EOF
+          cat > "work/arch/PKGBUILD" <<'EOFPKG'
+          find_file() { for f in "$@"; do [ -f "$f" ] && { echo "$f"; return 0; }; done; }
+
           pkgname=aseprite-bin
-          pkgver=${PKGVER}
-          pkgrel=${ARCH_PKGREL}
+          pkgver=PKGVER_PLACEHOLDER
+          pkgrel=PKGREL_PLACEHOLDER
           pkgdesc='Aseprite binary package built from upstream release'
           arch=('x86_64')
           url='https://www.aseprite.org/'
@@ -313,87 +311,49 @@ jobs:
           conflicts=('aseprite')
           depends=('glibc' 'gcc-libs' 'libx11' 'libxcursor' 'libxi' 'libxrandr' 'fontconfig' 'mesa' 'libwebp')
           source=('aseprite.tar.xz')
-          sha256sums=('${tar_sha256}')
+          sha256sums=('SHA256_PLACEHOLDER')
 
           package() {
-            local src_root icon_source license_source
+            local src_root="$(find "${srcdir}" -mindepth 1 -maxdepth 1 -type d | head -1)" || { echo "Failed to locate extracted directory" >&2; exit 1; }
+            install -Dm755 "${src_root}/aseprite" "${pkgdir}/usr/lib/aseprite/aseprite"
+            cp -a "${src_root}/data" "${pkgdir}/usr/lib/aseprite/data"
 
-            src_root="\$(find "\${srcdir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-            if [[ -z "\${src_root}" ]]; then
-              echo "Failed to locate extracted Aseprite directory." >&2
-              exit 1
-            fi
+            install -dm755 "${pkgdir}/usr/bin"
+            printf '#!/bin/sh\nexec /usr/lib/aseprite/aseprite "$@"\n' > "${pkgdir}/usr/bin/aseprite"
+            chmod 0755 "${pkgdir}/usr/bin/aseprite"
 
-            install -Dm755 "\${src_root}/aseprite" "\${pkgdir}/usr/lib/aseprite/aseprite"
-            cp -a "\${src_root}/data" "\${pkgdir}/usr/lib/aseprite/data"
+            local icon="$(find_file "${src_root}/data/icons/ase"*.png)" || icon="$(find "${src_root}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1)"
+            [ -n "$icon" ] && install -Dm644 "$icon" "${pkgdir}/usr/share/pixmaps/aseprite.png"
 
-            install -dm755 "\${pkgdir}/usr/bin"
-            printf '%s\n' '#!/bin/sh' 'exec /usr/lib/aseprite/aseprite "__ASE_ARGS__"' > "\${pkgdir}/usr/bin/aseprite"
-            chmod 0755 "\${pkgdir}/usr/bin/aseprite"
+            install -dm755 "${pkgdir}/usr/share/applications"
+            cat > "${pkgdir}/usr/share/applications/aseprite.desktop" <<'EOFDESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=Aseprite
+          GenericName=Pixel Art Editor
+          Comment=Animated sprite editor and pixel art tool
+          Exec=/usr/bin/aseprite %F
+          Icon=aseprite
+          Terminal=false
+          Categories=Graphics;2DGraphics;RasterGraphics;
+          StartupWMClass=aseprite
+          EOFDESKTOP
+            chmod 0644 "${pkgdir}/usr/share/applications/aseprite.desktop"
 
-            icon_source=""
-            for candidate in \
-              "\${src_root}/data/icons/ase256.png" \
-              "\${src_root}/data/icons/ase128.png" \
-              "\${src_root}/data/icons/ase64.png"; do
-              if [[ -f "\${candidate}" ]]; then
-                icon_source="\${candidate}"
-                break
-              fi
-            done
-            if [[ -z "\${icon_source}" ]]; then
-              icon_source="\$(find "\${src_root}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) | head -n 1 || true)"
-            fi
-            if [[ -z "\${icon_source}" ]]; then
-              echo "Failed to locate Aseprite icon PNG." >&2
-              exit 1
-            fi
-            install -Dm644 "\${icon_source}" "\${pkgdir}/usr/share/pixmaps/aseprite.png"
-
-            install -dm755 "\${pkgdir}/usr/share/applications"
-            printf '%s\n' \
-              '[Desktop Entry]' \
-              'Type=Application' \
-              'Name=Aseprite' \
-              'GenericName=Pixel Art Editor' \
-              'Comment=Animated sprite editor and pixel art tool' \
-              'Exec=/usr/bin/aseprite %F' \
-              'Icon=aseprite' \
-              'Terminal=false' \
-              'Categories=Graphics;2DGraphics;RasterGraphics;' \
-              'StartupWMClass=aseprite' \
-              > "\${pkgdir}/usr/share/applications/aseprite.desktop"
-            chmod 0644 "\${pkgdir}/usr/share/applications/aseprite.desktop"
-
-            license_source=""
-            for candidate in "\${src_root}/LICENSE" "\${src_root}/LICENSE.txt" "\${src_root}/EULA.txt"; do
-              if [[ -f "\${candidate}" ]]; then
-                license_source="\${candidate}"
-                break
-              fi
-            done
-            if [[ -z "\${license_source}" ]]; then
-              echo "Failed to locate upstream license file." >&2
-              exit 1
-            fi
-            install -Dm644 "\${license_source}" "\${pkgdir}/usr/share/licenses/\${pkgname}/LICENSE"
+            local license="$(find_file "${src_root}"/{LICENSE,LICENSE.txt,EULA.txt})" || { echo "Failed to locate license" >&2; exit 1; }
+            install -Dm644 "$license" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
           }
-          EOF
-          sed -i 's/__ASE_ARGS__/\$@/g' "work/arch/PKGBUILD"
+          EOFPKG
+
+          sed -i "s/PKGVER_PLACEHOLDER/${PKGVER}/g; s/PKGREL_PLACEHOLDER/${ARCH_PKGREL}/g; s/SHA256_PLACEHOLDER/${tar_sha256}/g" "work/arch/PKGBUILD"
 
           id builder >/dev/null 2>&1 || useradd -m builder
           chown -R builder:builder "${GITHUB_WORKSPACE}"
           runuser -u builder -- bash -lc "cd '${GITHUB_WORKSPACE}/work/arch' && makepkg -f --noconfirm --nodeps"
 
-          arch_pkg_file="$(find "work/arch" -maxdepth 1 -type f -name 'aseprite-bin-*.pkg.tar.zst' | head -n 1)"
-          if [ -z "${arch_pkg_file}" ]; then
-            echo "Failed to locate generated Arch package." >&2
-            exit 1
-          fi
-
-          cp "${arch_pkg_file}" "work/dist/"
-          arch_pkg_name="$(basename "${arch_pkg_file}")"
-          echo "arch_pkg_name=${arch_pkg_name}" >> "${GITHUB_OUTPUT}"
+          arch_pkg="$(find "work/arch" -maxdepth 1 -name 'aseprite-bin-*.pkg.tar.zst' -print -quit)" || { echo "Failed to locate generated package" >&2; exit 1; }
+          cp "${arch_pkg}" "work/dist/"
+          echo "arch_pkg_name=$(basename "${arch_pkg}")" >> "${GITHUB_OUTPUT}"
 
       - name: Verify Arch package metadata
         env:
@@ -401,16 +361,13 @@ jobs:
         run: |
           set -euo pipefail
           pkg_path="work/dist/${ARCH_PKG_NAME}"
-
-          pacman -Qp "${pkg_path}"
           listing="$(pacman -Qlp "${pkg_path}")"
 
-          printf '%s\n' "${listing}" | grep -F ' /usr/bin/aseprite' >/dev/null
-          printf '%s\n' "${listing}" | grep -F ' /usr/lib/aseprite/aseprite' >/dev/null
-          printf '%s\n' "${listing}" | grep -F ' /usr/lib/aseprite/data/' >/dev/null
-          printf '%s\n' "${listing}" | grep -F ' /usr/share/applications/aseprite.desktop' >/dev/null
-          printf '%s\n' "${listing}" | grep -F ' /usr/share/pixmaps/aseprite.png' >/dev/null
-          printf '%s\n' "${listing}" | grep -F ' /usr/share/licenses/aseprite-bin/LICENSE' >/dev/null
+          for path in /usr/bin/aseprite /usr/lib/aseprite/aseprite /usr/lib/aseprite/data/ /usr/share/applications/aseprite.desktop /usr/share/pixmaps/aseprite.png /usr/share/licenses/aseprite-bin/LICENSE; do
+            grep -qF " ${path}" <<<"${listing}" || { echo "Missing path: ${path}" >&2; exit 1; }
+          done
+
+          pacman -Qp "${pkg_path}"
 
       - name: Upload Arch package artifact
         uses: actions/upload-artifact@v4
