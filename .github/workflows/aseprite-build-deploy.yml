@@ -159,82 +159,45 @@ jobs:
 
           ninja -C "${SOURCE_DIR}/build" aseprite
 
-      - name: Package tar.xz
+      - name: Package tar.xz and deb
         env:
           SOURCE_DIR: ${{ steps.download.outputs.source_dir }}
           ASEPRITE_TAG: ${{ steps.meta.outputs.aseprite_tag }}
           TAR_NAME: ${{ steps.meta.outputs.tar_name }}
-        run: |
-          set -euo pipefail
-
-          release_dir="work/dist/aseprite-${ASEPRITE_TAG}-debian13-x64"
-          mkdir -p "${release_dir}"
-
-          install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${release_dir}/aseprite"
-          strip --strip-unneeded "${release_dir}/aseprite" || true
-          cp -a "${SOURCE_DIR}/build/bin/data" "${release_dir}/data"
-
-          for f in LICENSE LICENSE.txt EULA.txt; do
-            if [ -f "${SOURCE_DIR}/${f}" ]; then
-              cp "${SOURCE_DIR}/${f}" "${release_dir}/${f}"
-              break
-            fi
-          done
-
-          tar -C work/dist -cJf "work/dist/${TAR_NAME}" "$(basename "${release_dir}")"
-
-      - name: Package deb
-        env:
-          SOURCE_DIR: ${{ steps.download.outputs.source_dir }}
           DEB_VERSION: ${{ steps.meta.outputs.deb_version }}
           DEB_REVISION: ${{ steps.meta.outputs.deb_revision }}
           DEB_NAME: ${{ steps.meta.outputs.deb_name }}
         run: |
           set -euo pipefail
 
+          find_file() { for f in "$@"; do [ -f "$f" ] && { echo "$f"; return 0; }; done; }
+          copy_asset() { local src="$1" dst="$2" && [ -f "$src" ] && cp "$src" "$dst"; }
+
+          release_dir="work/dist/aseprite-${ASEPRITE_TAG}-debian13-x64"
+          mkdir -p "${release_dir}"
+          install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${release_dir}/aseprite"
+          strip --strip-unneeded "${release_dir}/aseprite" || true
+          cp -a "${SOURCE_DIR}/build/bin/data" "${release_dir}/data"
+          copy_asset "$(find_file "${SOURCE_DIR}"/{LICENSE,LICENSE.txt,EULA.txt})" "${release_dir}/LICENSE"
+          tar -C work/dist -cJf "work/dist/${TAR_NAME}" "$(basename "${release_dir}")"
+
+          # Create deb package
           pkg_root="work/pkgroot"
           rm -rf "${pkg_root}"
-          mkdir -p \
-            "${pkg_root}/DEBIAN" \
-            "${pkg_root}/usr/lib/aseprite" \
-            "${pkg_root}/usr/bin" \
-            "${pkg_root}/usr/share/doc/aseprite" \
-            "${pkg_root}/usr/share/applications" \
-            "${pkg_root}/usr/share/pixmaps"
+          mkdir -p "${pkg_root}"/{DEBIAN,usr/lib/aseprite,usr/bin,usr/share/{doc/aseprite,applications,pixmaps}}
 
           install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${pkg_root}/usr/lib/aseprite/aseprite"
           strip --strip-unneeded "${pkg_root}/usr/lib/aseprite/aseprite" || true
           cp -a "${SOURCE_DIR}/build/bin/data" "${pkg_root}/usr/lib/aseprite/data"
-
           cat > "${pkg_root}/usr/bin/aseprite" <<'EOF'
           #!/bin/sh
           exec /usr/lib/aseprite/aseprite "$@"
           EOF
           chmod 0755 "${pkg_root}/usr/bin/aseprite"
 
-          icon_source=""
-          for candidate in \
-            "${SOURCE_DIR}/build/bin/data/icons/ase256.png" \
-            "${SOURCE_DIR}/build/bin/data/icons/ase128.png" \
-            "${SOURCE_DIR}/build/bin/data/icons/ase64.png" \
-            "${SOURCE_DIR}/data/icons/ase256.png" \
-            "${SOURCE_DIR}/data/icons/ase128.png" \
-            "${SOURCE_DIR}/data/icons/ase64.png"; do
-            if [ -f "${candidate}" ]; then
-              icon_source="${candidate}"
-              break
-            fi
-          done
-
-          if [ -z "${icon_source}" ]; then
-            icon_source="$(find "${SOURCE_DIR}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) | head -n 1 || true)"
-          fi
-
-          if [ -n "${icon_source}" ]; then
-            install -m 0644 "${icon_source}" "${pkg_root}/usr/share/pixmaps/aseprite.png"
-          else
-            echo "Warning: no Aseprite icon PNG found; desktop icon may not display." >&2
-          fi
+          # Install icon
+          icon="$(find_file "${SOURCE_DIR}/build/bin/data/icons/ase"*.png "${SOURCE_DIR}/data/icons/ase"*.png)" || icon="$(find "${SOURCE_DIR}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1)"
+          [ -n "$icon" ] && install -m 0644 "$icon" "${pkg_root}/usr/share/pixmaps/aseprite.png"
 
           cat > "${pkg_root}/usr/share/applications/aseprite.desktop" <<'EOF'
           [Desktop Entry]
@@ -250,17 +213,12 @@ jobs:
           EOF
           chmod 0644 "${pkg_root}/usr/share/applications/aseprite.desktop"
 
-          for f in LICENSE LICENSE.txt EULA.txt; do
-            if [ -f "${SOURCE_DIR}/${f}" ]; then
-              cp "${SOURCE_DIR}/${f}" "${pkg_root}/usr/share/doc/aseprite/copyright"
-              break
-            fi
-          done
+          copy_asset "$(find_file "${SOURCE_DIR}"/{LICENSE,LICENSE.txt,EULA.txt})" "${pkg_root}/usr/share/doc/aseprite/copyright"
 
+          # Resolve dependencies
           debhelper_dir="work/debhelper"
-          bin_path="$(realpath "${pkg_root}/usr/lib/aseprite/aseprite")"
           mkdir -p "${debhelper_dir}/debian"
-          cat > "${debhelper_dir}/debian/control" <<EOF
+          cat > "${debhelper_dir}/debian/control" <<'EOF'
           Source: aseprite
           Section: graphics
           Priority: optional
@@ -272,13 +230,9 @@ jobs:
           Description: Aseprite built from upstream release for Debian 13
           EOF
 
-          shlibs_output="$(cd "${debhelper_dir}" && dpkg-shlibdeps -O "${bin_path}")"
-          deb_depends="$(printf '%s\n' "${shlibs_output}" | sed -n 's/^shlibs:Depends=//p')"
-          if [ -z "${deb_depends}" ]; then
-            echo "Failed to resolve shared library dependencies with dpkg-shlibdeps." >&2
-            exit 1
-          fi
-
+          bin_path="$(realpath "${pkg_root}/usr/lib/aseprite/aseprite")"
+          deb_depends="$(cd "${debhelper_dir}" && dpkg-shlibdeps -O "${bin_path}" 2>/dev/null | sed -n 's/^shlibs:Depends=//p' || true)"
+          [ -n "${deb_depends}" ] || { echo "Failed to resolve dependencies" >&2; exit 1; }
           installed_size="$(du -ks "${pkg_root}/usr" | cut -f1)"
 
           cat > "${pkg_root}/DEBIAN/control" <<EOF
@@ -296,7 +250,6 @@ jobs:
 
           dpkg-deb --build --root-owner-group -Zxz -z9 "${pkg_root}" "work/dist/${DEB_NAME}"
           dpkg-deb -I "work/dist/${DEB_NAME}"
-          dpkg-deb -c "work/dist/${DEB_NAME}"
 
       - name: Upload Debian build artifacts
         uses: actions/upload-artifact@v4
