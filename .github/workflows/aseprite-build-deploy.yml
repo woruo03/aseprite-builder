@@ -80,12 +80,14 @@ jobs:
           api_call() { curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}" "$@"; }
           clean_version() { printf '%s' "${1#v}" | tr -c "${2}" '.' | sed 's/^\.//;s/\.$//' ; }
 
-          aseprite_json="$(api_call "https://api.github.com/repos/aseprite/aseprite/releases/${INPUT_ASEPRITE_TAG:+tags/$INPUT_ASEPRITE_TAG}/latest")"
-          aseprite_tag="$(jq -r '.tag_name' <<<"${aseprite_json}")" && [ -n "${aseprite_tag}" ] || { echo "Failed to resolve Aseprite tag" >&2; exit 1; }
+          aseprite_api="https://api.github.com/repos/aseprite/aseprite/releases/$([ -n "${INPUT_ASEPRITE_TAG}" ] && echo "tags/${INPUT_ASEPRITE_TAG}" || echo "latest")"
+          aseprite_json="$(api_call "${aseprite_api}")"
+          aseprite_tag="$(jq -r '.tag_name' <<<"${aseprite_json}")" && [ -n "${aseprite_tag}" ] || { echo "Failed to resolve Aseprite tag from: ${aseprite_api}" >&2; exit 1; }
           source_zip_url="$(jq -r '[.assets[] | select(.name | test("Aseprite-.*-Source\\.zip"))][0].browser_download_url' <<<"${aseprite_json}")" && [ -n "${source_zip_url}" ] || { echo "Failed to find source zip" >&2; exit 1; }
 
           skia_json="$(api_call "https://api.github.com/repos/aseprite/skia/releases/tags/${INPUT_SKIA_RELEASE_TAG}" 2>/dev/null)" || {
-            skia_json="$(api_call "https://api.github.com/repos/aseprite/skia/releases?per_page=100" | jq -c --arg sel "${INPUT_SKIA_RELEASE_TAG}" '[.[] | select((.tag_name // "") == $sel or (.tag_name // "" | startswith($sel + "-")))] | first')"
+            skia_json="$(api_call "https://api.github.com/repos/aseprite/skia/releases?per_page=100")"
+            skia_json="$(jq -c --arg sel "${INPUT_SKIA_RELEASE_TAG}" '[.[] | select((.tag_name // "") == $sel or (.tag_name // "" | startswith($sel + "-")))] | first' <<<"${skia_json}")"
           }
           skia_release_tag="$(jq -r '.tag_name' <<<"${skia_json}")" && [ -n "${skia_release_tag}" ] || { echo "Failed to resolve skia tag" >&2; exit 1; }
           skia_zip_url="$(jq -r '[.assets[] | select(.name == "Skia-Linux-Release-x64.zip")][0].browser_download_url' <<<"${skia_json}")" && [ -n "${skia_zip_url}" ] || { echo "Failed to find skia zip" >&2; exit 1; }
@@ -123,13 +125,16 @@ jobs:
           find_project_root() {
             local search_dir="$1"
             [ -f "${search_dir}/CMakeLists.txt" ] && grep -Eqi '^[[:space:]]*project[[:space:]]*\([[:space:]]*aseprite' "${search_dir}/CMakeLists.txt" && echo "${search_dir}" && return 0
-            find "${search_dir}" -mindepth 2 -maxdepth 4 -type f -name CMakeLists.txt -print0 | while IFS= read -r -d '' f; do
-              grep -Eqi '^[[:space:]]*project[[:space:]]*\([[:space:]]*aseprite' "$f" && echo "$(dirname "$f")" && exit 0
-            done
+            while IFS= read -r f; do
+              if grep -Eqi '^[[:space:]]*project[[:space:]]*\([[:space:]]*aseprite' "$f" 2>/dev/null; then
+                dirname "$f"
+                return 0
+              fi
+            done < <(find "${search_dir}" -mindepth 2 -maxdepth 4 -type f -name CMakeLists.txt | head -n 20)
           }
 
           source_dir="$(find_project_root "work/src")" || { echo "Failed to locate Aseprite source root" >&2; exit 1; }
-          skia_lib="$(find work/deps/skia -path '*/out/Release-x64/libskia.a' -print -quit)" || { echo "Failed to locate libskia.a" >&2; exit 1; }
+          skia_lib="$(find work/deps/skia -type f -path '*/out/Release-x64/libskia.a' -print -quit)" || { echo "Failed to locate libskia.a" >&2; exit 1; }
           skia_dir="${skia_lib%/out/Release-x64/libskia.a}"
 
           echo "source_dir=$(realpath "${source_dir}")" >> "${GITHUB_OUTPUT}"
@@ -178,7 +183,7 @@ jobs:
           install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${release_dir}/aseprite"
           strip --strip-unneeded "${release_dir}/aseprite" || true
           cp -a "${SOURCE_DIR}/build/bin/data" "${release_dir}/data"
-          copy_asset "$(find_file "${SOURCE_DIR}"/{LICENSE,LICENSE.txt,EULA.txt})" "${release_dir}/LICENSE"
+          copy_asset "$(find_file "${SOURCE_DIR}/LICENSE" "${SOURCE_DIR}/LICENSE.txt" "${SOURCE_DIR}/EULA.txt")" "${release_dir}/LICENSE"
           tar -C work/dist -cJf "work/dist/${TAR_NAME}" "$(basename "${release_dir}")"
 
           # Create deb package
@@ -196,7 +201,8 @@ jobs:
           chmod 0755 "${pkg_root}/usr/bin/aseprite"
 
           # Install icon
-          icon="$(find_file "${SOURCE_DIR}/build/bin/data/icons/ase"*.png "${SOURCE_DIR}/data/icons/ase"*.png)" || icon="$(find "${SOURCE_DIR}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1)"
+          icon="$(find_file "${SOURCE_DIR}/build/bin/data/icons/ase256.png" "${SOURCE_DIR}/build/bin/data/icons/ase128.png" "${SOURCE_DIR}/build/bin/data/icons/ase64.png" "${SOURCE_DIR}/data/icons/ase256.png" "${SOURCE_DIR}/data/icons/ase128.png" "${SOURCE_DIR}/data/icons/ase64.png")"
+          [ -z "$icon" ] && icon="$(find "${SOURCE_DIR}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1)"
           [ -n "$icon" ] && install -m 0644 "$icon" "${pkg_root}/usr/share/pixmaps/aseprite.png"
 
           cat > "${pkg_root}/usr/share/applications/aseprite.desktop" <<'EOF'
@@ -213,7 +219,7 @@ jobs:
           EOF
           chmod 0644 "${pkg_root}/usr/share/applications/aseprite.desktop"
 
-          copy_asset "$(find_file "${SOURCE_DIR}"/{LICENSE,LICENSE.txt,EULA.txt})" "${pkg_root}/usr/share/doc/aseprite/copyright"
+          copy_asset "$(find_file "${SOURCE_DIR}/LICENSE" "${SOURCE_DIR}/LICENSE.txt" "${SOURCE_DIR}/EULA.txt")" "${pkg_root}/usr/share/doc/aseprite/copyright"
 
           # Resolve dependencies
           debhelper_dir="work/debhelper"
@@ -231,7 +237,7 @@ jobs:
           EOF
 
           bin_path="$(realpath "${pkg_root}/usr/lib/aseprite/aseprite")"
-          deb_depends="$(cd "${debhelper_dir}" && dpkg-shlibdeps -O "${bin_path}" 2>/dev/null | sed -n 's/^shlibs:Depends=//p' || true)"
+          deb_depends="$(dpkg-shlibdeps "${bin_path}" 2>/dev/null | sed -n 's/^shlibs:Depends=//p' || true)"
           [ -n "${deb_depends}" ] || { echo "Failed to resolve dependencies" >&2; exit 1; }
           installed_size="$(du -ks "${pkg_root}/usr" | cut -f1)"
 
@@ -314,7 +320,7 @@ jobs:
           sha256sums=('SHA256_PLACEHOLDER')
 
           package() {
-            local src_root="$(find "${srcdir}" -mindepth 1 -maxdepth 1 -type d | head -1)" || { echo "Failed to locate extracted directory" >&2; exit 1; }
+            local src_root="$(find "${srcdir}" -mindepth 1 -maxdepth 1 -type d | head -1)" && [ -n "$src_root" ] || { echo "Failed to locate extracted directory" >&2; exit 1; }
             install -Dm755 "${src_root}/aseprite" "${pkgdir}/usr/lib/aseprite/aseprite"
             cp -a "${src_root}/data" "${pkgdir}/usr/lib/aseprite/data"
 
@@ -322,7 +328,8 @@ jobs:
             printf '#!/bin/sh\nexec /usr/lib/aseprite/aseprite "$@"\n' > "${pkgdir}/usr/bin/aseprite"
             chmod 0755 "${pkgdir}/usr/bin/aseprite"
 
-            local icon="$(find_file "${src_root}/data/icons/ase"*.png)" || icon="$(find "${src_root}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1)"
+            local icon="$(find_file "${src_root}/data/icons/ase256.png" "${src_root}/data/icons/ase128.png" "${src_root}/data/icons/ase64.png")"
+            [ -z "$icon" ] && icon="$(find "${src_root}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1)"
             [ -n "$icon" ] && install -Dm644 "$icon" "${pkgdir}/usr/share/pixmaps/aseprite.png"
 
             install -dm755 "${pkgdir}/usr/share/applications"
@@ -340,7 +347,7 @@ jobs:
           EOFDESKTOP
             chmod 0644 "${pkgdir}/usr/share/applications/aseprite.desktop"
 
-            local license="$(find_file "${src_root}"/{LICENSE,LICENSE.txt,EULA.txt})" || { echo "Failed to locate license" >&2; exit 1; }
+            local license="$(find_file "${src_root}/LICENSE" "${src_root}/LICENSE.txt" "${src_root}/EULA.txt")" || { echo "Failed to locate license" >&2; exit 1; }
             install -Dm644 "$license" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
           }
           EOFPKG
