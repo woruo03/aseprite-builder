@@ -50,18 +50,7 @@ Aseprite 提供了官方认可的社区翻译，可以通过以下方式获取�
 
    **重要提示**：所有构建产物仅支持 **amd64 (x86_64)** 架构，不适用于ARM架构设备（如树莓派）。
 
-#### 文件下载
-1. 构建完成后，进入GitHub Releases页面
-2. 找到**草稿（Draft）** 版本的发布
-3. **重要**：**不要点击"Publish release"** - 保持草稿状态
-4. 从草稿中下载以下文件之一：
-   - `aseprite-*-linux-x64.tar.xz` - 通用Linux归档（推荐）
-   - `aseprite_*.deb` - Debian/Ubuntu软件包
-   - `aseprite-bin-*.pkg.tar.zst` - Arch Linux软件包
-
-   **架构限制**：所有构建产物仅支持 **amd64/x86_64** 架构，不支持ARM设备。
-
-#### 5.2 文件格式说明
+#### 文件格式说明
 
 **`.tar.xz`归档** （推荐所有用户）：
 - **优点**：
@@ -169,7 +158,7 @@ paru -U ./aseprite-bin-*.pkg.tar.zst
 1. **解析上游元数据**：获取Aseprite和Skia的最新版本信息
 2. **下载源代码**：下载Aseprite源代码和预编译的Skia库
 3. **构建Aseprite**：使用CMake和Ninja编译Aseprite
-4. **Debian打包**：创建`.tar.xz`归档文件和`.deb`软件包
+4. **打包**：并行生成 `.tar.xz` 归档、`.deb` 软件包
 5. **Arch打包**：生成`aseprite-bin`格式的`.pkg.tar.zst`包
    - Arch打包为二进制重打包流程，`makepkg`使用`--nodeps`避免在CI容器中校验运行时依赖是否已安装
 6. **草稿发布**：汇总所有构建产物并以草稿形式上传到GitHub Releases
