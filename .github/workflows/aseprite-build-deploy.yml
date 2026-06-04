@@ -1,4 +1,4 @@
-name: Build Aseprite for Debian 13 and Arch Linux
+name: Build Aseprite for Linux
 
 on:
   push:
@@ -7,37 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       aseprite_tag:
-        description: "Upstream Aseprite tag (empty = latest release)"
-        required: false
-        default: ""
-        type: string
-      skia_release_tag:
-        description: "Upstream aseprite/skia release tag or major prefix (e.g. m124)"
-        required: false
-        default: "m124"
-        type: string
-      deb_revision:
-        description: "Debian revision suffix"
-        required: false
-        default: "1"
-        type: string
-      arch_pkgrel:
-        description: "Arch package release number"
-        required: false
-        default: "1"
-        type: string
-      build_arch_package:
-        description: "Build Arch Linux .pkg.tar.zst package"
-        required: false
-        default: true
-        type: boolean
-      release_tag:
-        description: "Release tag in this repository (empty = auto)"
-        required: false
-        default: ""
-        type: string
-      release_name:
-        description: "Release name in this repository (empty = auto)"
+        description: "Upstream Aseprite tag to build (e.g. v1.3.2, empty = latest release)"
         required: false
         default: ""
         type: string
