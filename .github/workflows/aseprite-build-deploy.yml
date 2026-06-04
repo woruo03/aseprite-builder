@@ -367,7 +367,7 @@ jobs:
           chown -R builder:builder "${GITHUB_WORKSPACE}"
           runuser -u builder -- bash -lc "cd '${GITHUB_WORKSPACE}/work/arch' && makepkg -f --noconfirm --nodeps"
 
-          arch_pkg="$(find "work/arch" -maxdepth 1 -name 'aseprite-bin-*.pkg.tar.zst' -print -quit)" || { echo "Failed to locate generated package" >&2; exit 1; }
+          arch_pkg="$(find "work/arch" -maxdepth 1 -name 'aseprite-bin-[0-9]*.pkg.tar.zst' -print -quit)" || { echo "Failed to locate generated package" >&2; exit 1; }
           cp "${arch_pkg}" "work/dist/"
           echo "arch_pkg_name=$(basename "${arch_pkg}")" >> "${GITHUB_OUTPUT}"
 
@@ -380,8 +380,8 @@ jobs:
           [ -f "${pkg_path}" ] || { echo "Package file not found: ${pkg_path}" >&2; exit 1; }
           listing="$(pacman -Qlp "${pkg_path}")" || { echo "Failed to list package contents" >&2; exit 1; }
 
-          for path in /usr/bin/aseprite /usr/lib/aseprite/aseprite /usr/lib/aseprite/data /usr/share/applications/aseprite.desktop /usr/share/licenses/aseprite-bin/LICENSE; do
-            grep -E " $(printf '%s\n' "${path}" | sed 's/[.[\*^$]/\\&/g')$" <<<"${listing}" || { echo "Missing path: ${path}" >&2; exit 1; }
+          for path in /usr/bin/aseprite /usr/lib/aseprite/aseprite "/usr/lib/aseprite/data/" /usr/share/applications/aseprite.desktop /usr/share/licenses/aseprite-bin/LICENSE; do
+            echo "${listing}" | grep -qF " ${path}" || { echo "Missing path: ${path}" >&2; exit 1; }
           done
 
           pacman -Qp "${pkg_path}"
