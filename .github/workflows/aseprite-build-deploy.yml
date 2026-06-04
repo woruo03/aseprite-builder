@@ -361,7 +361,7 @@ jobs:
           }
           EOFPKG
 
-          sed -i "s/PKGVER_PLACEHOLDER/${PKGVER}/g; s/PKGREL_PLACEHOLDER/${ARCH_PKGREL}/g; s/SHA256_PLACEHOLDER/${tar_sha256}/g" "work/arch/PKGBUILD"
+          sed -i "s|PKGVER_PLACEHOLDER|${PKGVER}|g; s|PKGREL_PLACEHOLDER|${ARCH_PKGREL}|g; s|SHA256_PLACEHOLDER|${tar_sha256}|g" "work/arch/PKGBUILD"
 
           id builder >/dev/null 2>&1 || useradd -m builder
           chown -R builder:builder "${GITHUB_WORKSPACE}"
@@ -377,10 +377,11 @@ jobs:
         run: |
           set -euo pipefail
           pkg_path="work/dist/${ARCH_PKG_NAME}"
-          listing="$(pacman -Qlp "${pkg_path}")"
+          [ -f "${pkg_path}" ] || { echo "Package file not found: ${pkg_path}" >&2; exit 1; }
+          listing="$(pacman -Qlp "${pkg_path}")" || { echo "Failed to list package contents" >&2; exit 1; }
 
-          for path in /usr/bin/aseprite /usr/lib/aseprite/aseprite /usr/lib/aseprite/data/ /usr/share/applications/aseprite.desktop /usr/share/pixmaps/aseprite.png /usr/share/licenses/aseprite-bin/LICENSE; do
-            grep -qF " ${path}" <<<"${listing}" || { echo "Missing path: ${path}" >&2; exit 1; }
+          for path in /usr/bin/aseprite /usr/lib/aseprite/aseprite /usr/lib/aseprite/data /usr/share/applications/aseprite.desktop /usr/share/licenses/aseprite-bin/LICENSE; do
+            grep -E " $(printf '%s\n' "${path}" | sed 's/[.[\*^$]/\\&/g')$" <<<"${listing}" || { echo "Missing path: ${path}" >&2; exit 1; }
           done
 
           pacman -Qp "${pkg_path}"
