@@ -218,7 +218,7 @@ jobs:
       - name: Install deb packaging dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev
+          sudo apt-get install -y dpkg-dev libgl1 libx11-6 libxcursor1 libxi6 libxrandr2 libfontconfig1
 
       - name: Download Aseprite build
         uses: actions/download-artifact@v4
@@ -279,11 +279,11 @@ jobs:
           bin_path="$(realpath "${pkg_root}/usr/lib/aseprite/aseprite")"
 
           deb_depends=""
-          if deps_output="$(dpkg-shlibdeps "${bin_path}" 2>/dev/null)"; then
+          if deps_output="$(dpkg-shlibdeps -O "${bin_path}" 2>/dev/null)"; then
             deb_depends="$(sed -n 's/^shlibs:Depends=//p' <<<"${deps_output}")"
           else
             echo "Info: dpkg-shlibdeps failed, using fallback dependency list" >&2
-            deb_depends="libc6, libx11-6, libxcursor1, libxi6, libxrandr2, libgl1-mesa-glx, libfontconfig1"
+            deb_depends="libc6, libstdc++6, libx11-6, libxcursor1, libxi6, libxrandr2, libgl1, libfontconfig1"
           fi
 
           [ -n "${deb_depends}" ] && echo "Dependencies: ${deb_depends}" || echo "Warning: No dependencies resolved" >&2
@@ -417,7 +417,8 @@ jobs:
           chown -R builder:builder "${GITHUB_WORKSPACE}"
           runuser -u builder -- bash -lc "cd '${GITHUB_WORKSPACE}/work/arch' && makepkg -f --noconfirm --nodeps"
 
-          arch_pkg="$(find "work/arch" -maxdepth 1 -name 'aseprite-bin-[0-9]*.pkg.tar.zst' -print -quit)" || { echo "Failed to locate generated package" >&2; exit 1; }
+          arch_pkg="$(find "work/arch" -maxdepth 1 -name 'aseprite-bin-[0-9]*.pkg.tar.zst' -print -quit)"
+          [ -n "${arch_pkg}" ] || { echo "Failed to locate generated package" >&2; exit 1; }
           mkdir -p work/output
           cp "${arch_pkg}" "work/output/"
           echo "arch_pkg_name=$(basename "${arch_pkg}")" >> "${GITHUB_OUTPUT}"
