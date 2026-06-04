@@ -11,12 +11,27 @@ on:
         required: false
         default: ""
         type: string
+      package_tarball:
+        description: "Package as tar.xz archive"
+        required: false
+        default: true
+        type: boolean
+      package_deb:
+        description: "Package as .deb for Debian/Ubuntu"
+        required: false
+        default: true
+        type: boolean
+      package_arch:
+        description: "Package as .pkg.tar.zst for Arch Linux"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
 
 jobs:
-  build-debian-assets:
+  build-aseprite:
     runs-on: ubuntu-latest
     outputs:
       aseprite_tag: ${{ steps.metadata.outputs.aseprite_tag }}
@@ -25,6 +40,8 @@ jobs:
       archive_name: ${{ steps.metadata.outputs.archive_name }}
       deb_package_name: ${{ steps.metadata.outputs.deb_package_name }}
       pkgver: ${{ steps.metadata.outputs.pkgver }}
+      deb_version: ${{ steps.metadata.outputs.deb_version }}
+      deb_revision: ${{ steps.metadata.outputs.deb_revision }}
 
     steps:
       - name: Checkout repository
@@ -39,10 +56,10 @@ jobs:
         id: metadata
         env:
           INPUT_ASEPRITE_TAG: ${{ github.event.inputs.aseprite_tag }}
-          INPUT_SKIA_RELEASE_TAG: ${{ github.event.inputs.skia_release_tag || 'm124' }}
-          INPUT_DEB_REVISION: ${{ github.event.inputs.deb_revision || '1' }}
-          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
-          INPUT_RELEASE_NAME: ${{ github.event.inputs.release_name }}
+          INPUT_SKIA_RELEASE_TAG: m124
+          INPUT_DEB_REVISION: "1"
+          INPUT_RELEASE_TAG: ""
+          INPUT_RELEASE_NAME: ""
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -52,15 +69,15 @@ jobs:
 
           aseprite_api="https://api.github.com/repos/aseprite/aseprite/releases/$([ -n "${INPUT_ASEPRITE_TAG}" ] && echo "tags/${INPUT_ASEPRITE_TAG}" || echo "latest")"
           aseprite_json="$(api_call "${aseprite_api}")"
-          aseprite_tag="$(jq -r '.tag_name' <<<"${aseprite_json}")" && [ -n "${aseprite_tag}" ] || { echo "Failed to resolve Aseprite tag from: ${aseprite_api}" >&2; exit 1; }
-          source_zip_url="$(jq -r '[.assets[] | select(.name | test("Aseprite-.*-Source\\.zip"))][0].browser_download_url' <<<"${aseprite_json}")" && [ -n "${source_zip_url}" ] || { echo "Failed to find source zip" >&2; exit 1; }
+          aseprite_tag="$(jq -r '.tag_name // empty' <<<"${aseprite_json}")" && [ -n "${aseprite_tag}" ] || { echo "Failed to resolve Aseprite tag from: ${aseprite_api}" >&2; exit 1; }
+          source_zip_url="$(jq -r '[.assets[] | select(.name | test("Aseprite-.*-Source\\.zip"))][0].browser_download_url // empty' <<<"${aseprite_json}")" && [ -n "${source_zip_url}" ] || { echo "Failed to find source zip" >&2; exit 1; }
 
           skia_json="$(api_call "https://api.github.com/repos/aseprite/skia/releases/tags/${INPUT_SKIA_RELEASE_TAG}" 2>/dev/null)" || {
             skia_json="$(api_call "https://api.github.com/repos/aseprite/skia/releases?per_page=100")"
             skia_json="$(jq -c --arg sel "${INPUT_SKIA_RELEASE_TAG}" '[.[] | select((.tag_name // "") == $sel or (.tag_name // "" | startswith($sel + "-")))] | first' <<<"${skia_json}")"
           }
-          skia_release_tag="$(jq -r '.tag_name' <<<"${skia_json}")" && [ -n "${skia_release_tag}" ] || { echo "Failed to resolve skia tag" >&2; exit 1; }
-          skia_zip_url="$(jq -r '[.assets[] | select(.name == "Skia-Linux-Release-x64.zip")][0].browser_download_url' <<<"${skia_json}")" && [ -n "${skia_zip_url}" ] || { echo "Failed to find skia zip" >&2; exit 1; }
+          skia_release_tag="$(jq -r '.tag_name // empty' <<<"${skia_json}")" && [ -n "${skia_release_tag}" ] || { echo "Failed to resolve skia tag" >&2; exit 1; }
+          skia_zip_url="$(jq -r '[.assets[] | select(.name == "Skia-Linux-Release-x64.zip")][0].browser_download_url // empty' <<<"${skia_json}")" && [ -n "${skia_zip_url}" ] || { echo "Failed to find skia zip" >&2; exit 1; }
 
           deb_version="$(clean_version "${aseprite_tag}" 'A-Za-z0-9.+:~')" && [ -n "${deb_version}" ] || { echo "Failed to compute deb version" >&2; exit 1; }
           pkgver="$(clean_version "${aseprite_tag}" 'A-Za-z0-9._')" && [ -n "${pkgver}" ] || { echo "Failed to compute pkgver" >&2; exit 1; }
@@ -73,8 +90,8 @@ jobs:
             echo "skia_zip_url=${skia_zip_url}"
             echo "deb_version=${deb_version}"
             echo "deb_revision=${deb_revision}"
-            echo "release_tag=${INPUT_RELEASE_TAG:-aseprite-${aseprite_tag}-debian13-x64}"
-            echo "release_name=${INPUT_RELEASE_NAME:-Aseprite ${aseprite_tag} for Debian 13 (x64)}"
+            echo "release_tag=${INPUT_RELEASE_TAG:-aseprite-${aseprite_tag}-linux-x64}"
+            echo "release_name=${INPUT_RELEASE_NAME:-Aseprite ${aseprite_tag} for Linux (x64)}"
             echo "archive_name=aseprite-${aseprite_tag}-linux-x64.tar.xz"
             echo "deb_package_name=aseprite_${deb_version}-${deb_revision}_amd64.deb"
             echo "pkgver=${pkgver}"
@@ -89,8 +106,10 @@ jobs:
           set -euo pipefail
           mkdir -p work/{src,deps/skia}
 
-          curl -fL "${SOURCE_ZIP_URL}" -o work/src/source.zip && unzip -q work/src/source.zip -d work/src
-          curl -fL "${SKIA_ZIP_URL}" -o work/deps/skia.zip && unzip -q work/deps/skia.zip -d work/deps/skia
+          curl -fL "${SOURCE_ZIP_URL}" -o work/src/source.zip
+          unzip -q work/src/source.zip -d work/src
+          curl -fL "${SKIA_ZIP_URL}" -o work/deps/skia.zip
+          unzip -q work/deps/skia.zip -d work/deps/skia
 
           find_project_root() {
             local search_dir="$1"
@@ -101,10 +120,12 @@ jobs:
                 return 0
               fi
             done < <(find "${search_dir}" -mindepth 2 -maxdepth 4 -type f -name CMakeLists.txt | head -n 20)
+            return 1
           }
 
           source_dir="$(find_project_root "work/src")" || { echo "Failed to locate Aseprite source root" >&2; exit 1; }
-          skia_lib="$(find work/deps/skia -type f -path '*/out/Release-x64/libskia.a' -print -quit)" || { echo "Failed to locate libskia.a" >&2; exit 1; }
+          skia_lib="$(find work/deps/skia -type f -path '*/out/Release-x64/libskia.a' -print -quit)"
+          [ -n "${skia_lib}" ] || { echo "Failed to locate libskia.a" >&2; exit 1; }
           skia_dir="${skia_lib%/out/Release-x64/libskia.a}"
 
           echo "source_dir=$(realpath "${source_dir}")" >> "${GITHUB_OUTPUT}"
@@ -134,45 +155,103 @@ jobs:
 
           ninja -C "${SOURCE_DIR}/build" aseprite
 
-      - name: Package tar.xz and deb
+      - name: Prepare release bundle
         env:
           SOURCE_DIR: ${{ steps.download.outputs.source_dir }}
           ASEPRITE_TAG: ${{ steps.metadata.outputs.aseprite_tag }}
-          ARCHIVE_NAME: ${{ steps.metadata.outputs.archive_name }}
-          DEB_VERSION: ${{ steps.metadata.outputs.deb_version }}
-          DEB_REVISION: ${{ steps.metadata.outputs.deb_revision }}
-          DEB_PACKAGE_NAME: ${{ steps.metadata.outputs.deb_package_name }}
         run: |
           set -euo pipefail
 
-          find_file() { for f in "$@"; do [ -f "$f" ] && { echo "$f"; return 0; }; done; }
-          copy_asset() { local src="$1" dst="$2" && [ -f "$src" ] && cp "$src" "$dst"; }
-
-          release_dir="work/dist/aseprite-${ASEPRITE_TAG}-linux-x64"
+          release_dir="work/release/aseprite-${ASEPRITE_TAG}-linux-x64"
           mkdir -p "${release_dir}"
           install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${release_dir}/aseprite"
           strip --strip-unneeded "${release_dir}/aseprite" || true
           cp -a "${SOURCE_DIR}/build/bin/data" "${release_dir}/data"
-          copy_asset "$(find_file "${SOURCE_DIR}/LICENSE" "${SOURCE_DIR}/LICENSE.txt" "${SOURCE_DIR}/EULA.txt")" "${release_dir}/LICENSE"
-          tar -C work/dist -cJf "work/dist/${ARCHIVE_NAME}" "$(basename "${release_dir}")"
 
-          # Create deb package
+          license_file=""
+          for f in "${SOURCE_DIR}/LICENSE" "${SOURCE_DIR}/LICENSE.txt" "${SOURCE_DIR}/EULA.txt"; do
+            [ -f "$f" ] && { license_file="$f"; break; }
+          done
+          [ -n "$license_file" ] && cp "$license_file" "${release_dir}/LICENSE"
+
+      - name: Upload Aseprite build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aseprite-build-${{ steps.metadata.outputs.aseprite_tag }}
+          path: work/release/
+          if-no-files-found: error
+
+  package-tarball:
+    needs: build-aseprite
+    if: ${{ github.event_name == 'push' || github.event.inputs.package_tarball == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Aseprite build
+        uses: actions/download-artifact@v4
+        with:
+          name: aseprite-build-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/release
+
+      - name: Create tar.xz archive
+        env:
+          ASEPRITE_TAG: ${{ needs.build-aseprite.outputs.aseprite_tag }}
+          ARCHIVE_NAME: ${{ needs.build-aseprite.outputs.archive_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p work/output
+          tar -C work/release -cJf "work/output/${ARCHIVE_NAME}" "aseprite-${ASEPRITE_TAG}-linux-x64"
+
+      - name: Upload tar.xz artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aseprite-tarball-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/output/${{ needs.build-aseprite.outputs.archive_name }}
+          if-no-files-found: error
+
+  package-deb:
+    needs: build-aseprite
+    if: ${{ github.event_name == 'push' || github.event.inputs.package_deb == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install deb packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev
+
+      - name: Download Aseprite build
+        uses: actions/download-artifact@v4
+        with:
+          name: aseprite-build-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/release
+
+      - name: Create deb package
+        env:
+          ASEPRITE_TAG: ${{ needs.build-aseprite.outputs.aseprite_tag }}
+          DEB_VERSION: ${{ needs.build-aseprite.outputs.deb_version }}
+          DEB_REVISION: ${{ needs.build-aseprite.outputs.deb_revision }}
+          DEB_PACKAGE_NAME: ${{ needs.build-aseprite.outputs.deb_package_name }}
+        run: |
+          set -euo pipefail
+
+          find_file() { for f in "$@"; do [ -f "$f" ] && { echo "$f"; return 0; }; done; }
+
+          release_dir="work/release/aseprite-${ASEPRITE_TAG}-linux-x64"
+
           pkg_root="work/pkgroot"
           rm -rf "${pkg_root}"
           mkdir -p "${pkg_root}"/{DEBIAN,usr/lib/aseprite,usr/bin,usr/share/{doc/aseprite,applications,pixmaps}}
 
-          install -m 0755 "${SOURCE_DIR}/build/bin/aseprite" "${pkg_root}/usr/lib/aseprite/aseprite"
+          install -m 0755 "${release_dir}/aseprite" "${pkg_root}/usr/lib/aseprite/aseprite"
           strip --strip-unneeded "${pkg_root}/usr/lib/aseprite/aseprite" || true
-          cp -a "${SOURCE_DIR}/build/bin/data" "${pkg_root}/usr/lib/aseprite/data"
-          cat > "${pkg_root}/usr/bin/aseprite" <<'EOF'
-          #!/bin/sh
-          exec /usr/lib/aseprite/aseprite "$@"
-          EOF
+          cp -a "${release_dir}/data" "${pkg_root}/usr/lib/aseprite/data"
+
+          printf '#!/bin/sh\nexec /usr/lib/aseprite/aseprite "$@"\n' > "${pkg_root}/usr/bin/aseprite"
           chmod 0755 "${pkg_root}/usr/bin/aseprite"
 
-          # Install icon
-          icon="$(find_file "${SOURCE_DIR}/build/bin/data/icons/ase256.png" "${SOURCE_DIR}/build/bin/data/icons/ase128.png" "${SOURCE_DIR}/build/bin/data/icons/ase64.png" "${SOURCE_DIR}/data/icons/ase256.png" "${SOURCE_DIR}/data/icons/ase128.png" "${SOURCE_DIR}/data/icons/ase64.png")"
-          [ -z "$icon" ] && icon="$(find "${SOURCE_DIR}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1)"
+          icon="$(find_file "${release_dir}/data/icons/ase256.png" "${release_dir}/data/icons/ase128.png" "${release_dir}/data/icons/ase64.png")"
+          [ -z "$icon" ] && icon="$(find "${release_dir}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1)"
           [ -n "$icon" ] && install -m 0644 "$icon" "${pkg_root}/usr/share/pixmaps/aseprite.png"
 
           cat > "${pkg_root}/usr/share/applications/aseprite.desktop" <<'EOF'
@@ -189,31 +268,21 @@ jobs:
           EOF
           chmod 0644 "${pkg_root}/usr/share/applications/aseprite.desktop"
 
-          copy_asset "$(find_file "${SOURCE_DIR}/LICENSE" "${SOURCE_DIR}/LICENSE.txt" "${SOURCE_DIR}/EULA.txt")" "${pkg_root}/usr/share/doc/aseprite/copyright"
-
-          # Resolve dependencies
-          debhelper_dir="work/debhelper"
-          mkdir -p "${debhelper_dir}/debian"
-          cat > "${debhelper_dir}/debian/control" <<'EOF'
-          Source: aseprite
-          Section: graphics
-          Priority: optional
-          Maintainer: GitHub Actions <actions@github.com>
-          Standards-Version: 4.6.2
-
-          Package: aseprite
-          Architecture: amd64
-          Description: Aseprite built from upstream release for Debian 13
-          EOF
+          license_file=""
+          for f in "${release_dir}/LICENSE" "${release_dir}/LICENSE.txt" "${release_dir}/EULA.txt"; do
+            [ -f "$f" ] && { license_file="$f"; break; }
+          done
+          if [ -n "$license_file" ]; then
+            cp "$license_file" "${pkg_root}/usr/share/doc/aseprite/copyright"
+          fi
 
           bin_path="$(realpath "${pkg_root}/usr/lib/aseprite/aseprite")"
 
-          # Try to resolve dependencies with dpkg-shlibdeps
           deb_depends=""
-          if dpkg-shlibdeps "${bin_path}" >/dev/null 2>&1; then
-            deb_depends="$(dpkg-shlibdeps "${bin_path}" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')"
+          if deps_output="$(dpkg-shlibdeps "${bin_path}" 2>/dev/null)"; then
+            deb_depends="$(sed -n 's/^shlibs:Depends=//p' <<<"${deps_output}")"
           else
-            echo "Info: dpkg-shlibdeps unavailable, using fallback dependency list" >&2
+            echo "Info: dpkg-shlibdeps failed, using fallback dependency list" >&2
             deb_depends="libc6, libx11-6, libxcursor1, libxi6, libxrandr2, libgl1-mesa-glx, libfontconfig1"
           fi
 
@@ -233,21 +302,20 @@ jobs:
            Aseprite Linux binary package built in GitHub Actions.
           EOF
 
-          dpkg-deb --build --root-owner-group -Zxz -z9 "${pkg_root}" "work/dist/${DEB_PACKAGE_NAME}"
-          dpkg-deb -I "work/dist/${DEB_PACKAGE_NAME}"
+          mkdir -p work/output
+          dpkg-deb --build --root-owner-group -Zxz -z9 "${pkg_root}" "work/output/${DEB_PACKAGE_NAME}"
+          dpkg-deb -I "work/output/${DEB_PACKAGE_NAME}"
 
-      - name: Upload Debian build artifacts
+      - name: Upload deb artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aseprite-debian-${{ steps.metadata.outputs.aseprite_tag }}
-          path: |
-            work/dist/${{ steps.metadata.outputs.archive_name }}
-            work/dist/${{ steps.metadata.outputs.deb_package_name }}
+          name: aseprite-deb-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/output/${{ needs.build-aseprite.outputs.deb_package_name }}
           if-no-files-found: error
 
-  build-arch-package:
-    needs: build-debian-assets
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_arch_package == 'true' }}
+  package-arch:
+    needs: build-aseprite
+    if: ${{ github.event_name == 'push' || github.event.inputs.package_arch == 'true' }}
     runs-on: ubuntu-latest
     container:
       image: archlinux:base-devel
@@ -262,29 +330,35 @@ jobs:
             libx11 libxcursor libxi libxrandr \
             fontconfig mesa libwebp
 
-      - name: Download Debian tar artifact
+      - name: Download Aseprite build
         uses: actions/download-artifact@v4
         with:
-          name: aseprite-debian-${{ needs.build-debian-assets.outputs.aseprite_tag }}
-          path: work/dist
+          name: aseprite-build-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/release
+
+      - name: Create tar.xz archive for Arch packaging
+        env:
+          ASEPRITE_TAG: ${{ needs.build-aseprite.outputs.aseprite_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p work/arch
+          tar -C work/release -cJf "work/arch/aseprite.tar.xz" "aseprite-${ASEPRITE_TAG}-linux-x64"
 
       - name: Build Arch package
         id: arch
         env:
-          ARCHIVE_NAME: ${{ needs.build-debian-assets.outputs.archive_name }}
-          PKGVER: ${{ needs.build-debian-assets.outputs.pkgver }}
-          ARCH_PKGREL: ${{ github.event.inputs.arch_pkgrel || '1' }}
+          PKGVER: ${{ needs.build-aseprite.outputs.pkgver }}
+          ARCH_PKGREL: "1"
         run: |
           set -euo pipefail
-          [[ "${ARCH_PKGREL}" =~ ^[0-9]+$ ]] || { echo "arch_pkgrel must contain only digits" >&2; exit 1; }
+          [ "${ARCH_PKGREL}" ] && echo "arch_pkgrel: ${ARCH_PKGREL}" > /dev/null || { echo "arch_pkgrel must be set" >&2; exit 1; }
+          echo "${ARCH_PKGREL}" | grep -q '^[0-9]\+$' || { echo "arch_pkgrel must contain only digits" >&2; exit 1; }
 
-          mkdir -p work/arch
-          cp "work/dist/${ARCHIVE_NAME}" "work/arch/aseprite.tar.xz"
           tar_sha256="$(sha256sum "work/arch/aseprite.tar.xz" | awk '{print $1}')"
 
-          cat > "work/arch/PKGBUILD" <<'EOFPKG'
+          sed 's/^[[:space:]]*//' > "work/arch/PKGBUILD" <<'EOFPKG'
           find_file() { for f in "$@"; do [ -f "$f" ] && { echo "$f"; return 0; }; done; }
-
+          
           pkgname=aseprite-bin
           pkgver=PKGVER_PLACEHOLDER
           pkgrel=PKGREL_PLACEHOLDER
@@ -297,20 +371,20 @@ jobs:
           depends=('glibc' 'gcc-libs' 'libx11' 'libxcursor' 'libxi' 'libxrandr' 'fontconfig' 'mesa' 'libwebp')
           source=('aseprite.tar.xz')
           sha256sums=('SHA256_PLACEHOLDER')
-
+          
           package() {
             local src_root="$(find "${srcdir}" -mindepth 1 -maxdepth 1 -type d | head -1)" && [ -n "$src_root" ] || { echo "Failed to locate extracted directory" >&2; exit 1; }
             install -Dm755 "${src_root}/aseprite" "${pkgdir}/usr/lib/aseprite/aseprite"
             cp -a "${src_root}/data" "${pkgdir}/usr/lib/aseprite/data"
-
+          
             install -dm755 "${pkgdir}/usr/bin"
             printf '#!/bin/sh\nexec /usr/lib/aseprite/aseprite "$@"\n' > "${pkgdir}/usr/bin/aseprite"
             chmod 0755 "${pkgdir}/usr/bin/aseprite"
-
+          
             local icon="$(find_file "${src_root}/data/icons/ase256.png" "${src_root}/data/icons/ase128.png" "${src_root}/data/icons/ase64.png")"
             [ -z "$icon" ] && icon="$(find "${src_root}" -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1)"
             [ -n "$icon" ] && install -Dm644 "$icon" "${pkgdir}/usr/share/pixmaps/aseprite.png"
-
+          
             install -dm755 "${pkgdir}/usr/share/applications"
             cat > "${pkgdir}/usr/share/applications/aseprite.desktop" <<'EOFDESKTOP'
           [Desktop Entry]
@@ -325,9 +399,15 @@ jobs:
           StartupWMClass=aseprite
           EOFDESKTOP
             chmod 0644 "${pkgdir}/usr/share/applications/aseprite.desktop"
-
-            local license="$(find_file "${src_root}/LICENSE" "${src_root}/LICENSE.txt" "${src_root}/EULA.txt")" || { echo "Failed to locate license" >&2; exit 1; }
-            install -Dm644 "$license" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+          
+            local license="$(find_file "${src_root}/LICENSE" "${src_root}/LICENSE.txt" "${src_root}/EULA.txt")"
+            if [ -n "$license" ]; then
+              install -Dm644 "$license" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+            else
+              echo "Warning: License file not found, creating empty license file" >&2
+              mkdir -p "${pkgdir}/usr/share/licenses/${pkgname}"
+              touch "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+            fi
           }
           EOFPKG
 
@@ -338,7 +418,8 @@ jobs:
           runuser -u builder -- bash -lc "cd '${GITHUB_WORKSPACE}/work/arch' && makepkg -f --noconfirm --nodeps"
 
           arch_pkg="$(find "work/arch" -maxdepth 1 -name 'aseprite-bin-[0-9]*.pkg.tar.zst' -print -quit)" || { echo "Failed to locate generated package" >&2; exit 1; }
-          cp "${arch_pkg}" "work/dist/"
+          mkdir -p work/output
+          cp "${arch_pkg}" "work/output/"
           echo "arch_pkg_name=$(basename "${arch_pkg}")" >> "${GITHUB_OUTPUT}"
 
       - name: Verify Arch package metadata
@@ -346,7 +427,7 @@ jobs:
           ARCH_PKG_NAME: ${{ steps.arch.outputs.arch_pkg_name }}
         run: |
           set -euo pipefail
-          pkg_path="work/dist/${ARCH_PKG_NAME}"
+          pkg_path="work/output/${ARCH_PKG_NAME}"
           [ -f "${pkg_path}" ] || { echo "Package file not found: ${pkg_path}" >&2; exit 1; }
           listing="$(pacman -Qlp "${pkg_path}")" || { echo "Failed to list package contents" >&2; exit 1; }
 
@@ -359,33 +440,59 @@ jobs:
       - name: Upload Arch package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aseprite-archlinux-${{ needs.build-debian-assets.outputs.aseprite_tag }}
-          path: work/dist/${{ steps.arch.outputs.arch_pkg_name }}
+          name: aseprite-arch-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/output/${{ steps.arch.outputs.arch_pkg_name }}
           if-no-files-found: error
 
   publish-draft-release:
-    needs: [build-debian-assets, build-arch-package]
-    if: ${{ always() && needs.build-debian-assets.result == 'success' && (needs.build-arch-package.result == 'success' || needs.build-arch-package.result == 'skipped') }}
+    needs: [build-aseprite, package-tarball, package-deb, package-arch]
+    if: ${{ always() && needs.build-aseprite.result == 'success' && (needs.package-tarball.result == 'success' || needs.package-tarball.result == 'skipped') && (needs.package-deb.result == 'success' || needs.package-deb.result == 'skipped') && (needs.package-arch.result == 'success' || needs.package-arch.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: aseprite-debian-${{ needs.build-debian-assets.outputs.aseprite_tag }}
-          path: work/release-dist
+      - name: Create output directory
+        run: |
+          mkdir -p work/final-release
 
-      - uses: actions/download-artifact@v4
-        if: needs.build-arch-package.result == 'success'
+      - name: Download tarball artifact
+        if: ${{ needs.package-tarball.result == 'success' }}
+        uses: actions/download-artifact@v4
         with:
-          name: aseprite-archlinux-${{ needs.build-debian-assets.outputs.aseprite_tag }}
-          path: work/release-dist
+          name: aseprite-tarball-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/final-release
 
-      - uses: softprops/action-gh-release@v2
+      - name: Download deb artifact
+        if: ${{ needs.package-deb.result == 'success' }}
+        uses: actions/download-artifact@v4
         with:
-          tag_name: ${{ needs.build-debian-assets.outputs.release_tag }}
-          name: ${{ needs.build-debian-assets.outputs.release_name }}
+          name: aseprite-deb-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/final-release
+
+      - name: Download Arch artifact
+        if: ${{ needs.package-arch.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: aseprite-arch-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/final-release
+
+      - name: List release files
+        run: |
+          if [ -d work/final-release ]; then
+            count=$(find work/final-release -type f | wc -l)
+            echo "Files in final-release: $count"
+            ls -lah work/final-release/
+          else
+            echo "No final-release directory"
+          fi
+
+      - name: Publish draft release
+        if: ${{ hashFiles('work/final-release/*') != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-aseprite.outputs.release_tag }}
+          name: ${{ needs.build-aseprite.outputs.release_name }}
           target_commitish: ${{ github.sha }}
           draft: true
           prerelease: false
           make_latest: false
           overwrite_files: true
-          files: work/release-dist/*
+          files: work/final-release/*
