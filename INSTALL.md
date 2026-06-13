@@ -1,6 +1,7 @@
 # Table of contents
 
 * [Platforms](#platforms)
+* [Pre-built Packages (Linux)](#pre-built-packages-linux)
 * [Get the source code](#get-the-source-code)
 * [Dependencies](#dependencies)
   * [Windows dependencies](#windows-dependencies)
@@ -24,6 +25,54 @@ platforms (older and newer versions might work):
   * *Important*: We don't support [MinGW](#mingw)
 * macOS 15.2 Sequoia + Xcode 16.3 + macOS 15.4 SDK
 * Linux Ubuntu Focal Fossa 20.04 + clang 12
+* Fedora (via pre-built RPM, see below)
+
+# Pre-built Packages (Linux)
+
+If you don't want to compile Aseprite from source, pre-built packages
+are available from the [Aseprite Builder for Linux](https://github.com/woruo03/aseprite-builder)
+project. These packages are generated automatically from the latest
+Aseprite release via GitHub Actions and are kept as draft releases.
+
+## Fedora / RHEL
+
+Download the `.rpm` package from the GitHub Releases page and install:
+
+    sudo dnf install ./aseprite-*.x86_64.rpm
+
+The package provides:
+- Binary and data files at `/usr/lib64/aseprite/`
+- Wrapper script at `/usr/bin/aseprite`
+- Desktop entry and icon for application menus
+
+To uninstall:
+
+    sudo dnf remove aseprite
+
+All runtime dependencies (libstdc++, libX11, libXcursor, libXi,
+libXrandr, fontconfig, mesa-libGL, libwebp) are declared in the
+package and resolved automatically by `dnf`.
+
+## Debian / Ubuntu
+
+Download the `.deb` package and install:
+
+    sudo dpkg -i aseprite_*.deb
+    sudo apt-get install -f   # Resolve any missing dependencies
+
+## Arch Linux
+
+Download the `.pkg.tar.zst` package and install:
+
+    sudo pacman -U aseprite-bin-*.pkg.tar.zst
+
+## Portable (all Linux distributions)
+
+Download the `.tar.xz` archive, extract and run directly (no root
+required):
+
+    tar -xJf aseprite-*-linux-x64.tar.xz
+    ./aseprite-*/aseprite
 
 # Get the source code
 
@@ -82,11 +131,11 @@ Or use clang-12 packages (or newer) in case that clang in your distribution is o
 
 On Fedora:
 
-    sudo dnf install -y gcc-c++ clang libcxx-devel cmake ninja-build libX11-devel libXcursor-devel libXi-devel libXrandr-devel mesa-libGL-devel fontconfig-devel
+    sudo dnf install -y gcc-c++ clang cmake ninja-build libX11-devel libXcursor-devel libXi-devel libXrandr-devel mesa-libGL-devel fontconfig-devel
 
 On Arch:
 
-    sudo pacman -S gcc clang cmake ninja libx11 libxcursor libxi libxrandr mesa-libgl fontconfig libwebp
+    sudo pacman -S gcc clang cmake ninja libx11 libxcursor libxi libxrandr mesa fontconfig libwebp
 
 On SUSE:
 

@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-在Linux上自动构建[Aseprite](https://www.aseprite.org/)像素艺术编辑器，生成多种安装格式（tar.xz、deb、pkg.tar.zst）。通过GitHub Actions自动从上游获取最新源代码，编译并打包，无需本地构建。
+在Linux上自动构建[Aseprite](https://www.aseprite.org/)像素艺术编辑器，生成多种安装格式（tar.xz、deb、rpm、pkg.tar.zst）。通过GitHub Actions自动从上游获取最新源代码，编译并打包，无需本地构建。
 
 ## ⚠️ 重要法律声明
 
@@ -36,6 +36,7 @@
 |---------|---------|------|
 | `aseprite-*-linux-x64.tar.xz` | 所有Linux | 无需root，便携式，通用 |
 | `aseprite_*.deb` | Debian/Ubuntu | 系统集成，自动依赖 |
+| `aseprite-*.x86_64.rpm` | Fedora/RHEL | RPM原生格式 |
 | `aseprite-bin-*.pkg.tar.zst` | Arch Linux | Arch原生格式 |
 
 **注意**：仅支持**amd64 (x86_64)** 架构。
@@ -54,6 +55,12 @@ sudo dpkg -i aseprite_*.deb
 aseprite
 ```
 
+**rpm包**（Fedora/RHEL）：
+```bash
+sudo dnf install ./aseprite-*.x86_64.rpm
+aseprite
+```
+
 **pkg.tar.zst包**（Arch）：
 ```bash
 sudo pacman -U aseprite-bin-*.pkg.tar.zst
@@ -65,14 +72,15 @@ aseprite
 - **X11**：完全支持（GNOME、KDE、XFCE、MATE等）
 - **Wayland**：需XWayland支持
   ```bash
-  sudo apt install xorg-xwayland    # Debian/Ubuntu
-  sudo pacman -S xorg-xwayland      # Arch
+  sudo apt install xorg-xwayland        # Debian/Ubuntu
+  sudo dnf install xorg-x11-server-Xwayland  # Fedora/RHEL
+  sudo pacman -S xorg-xwayland          # Arch
   ```
 
 ## 功能特性
 
 - 自动检测Aseprite最新版本
-- 多格式打包（tar.xz、deb、pkg.tar.zst）
+- 多格式打包（tar.xz、deb、rpm、pkg.tar.zst）
 - 自动配置Skia图形库
 - 桌面快捷方式和菜单集成
 - 草稿发布防止意外公开
@@ -92,6 +100,7 @@ aseprite
 | `package_tarball` | 是否构建tar.xz | true |
 | `package_deb` | 是否构建deb包 | true |
 | `package_arch` | 是否构建Arch包 | true |
+| `package_rpm` | 是否构建RPM包 | true |
 
 ### 构建流程
 
@@ -157,6 +166,7 @@ EOF
 | 系统 | 推荐 | 备选 |
 |------|------|------|
 | Debian/Ubuntu | deb | tar.xz |
+| Fedora/RHEL | rpm | tar.xz |
 | Arch | pkg.tar.zst | tar.xz |
 | 其他/便携式 | tar.xz | - |
 
@@ -171,17 +181,19 @@ EOF
 
 安装XWayland后在终端运行测试：
 ```bash
-sudo apt install xorg-xwayland       # Debian/Ubuntu
-sudo pacman -S xorg-xwayland         # Arch
+sudo apt install xorg-xwayland                   # Debian/Ubuntu
+sudo dnf install xorg-x11-server-Xwayland         # Fedora/RHEL
+sudo pacman -S xorg-xwayland                      # Arch
 aseprite --version
 ```
 
 ### Q: 如何查看版本信息？
 
 ```bash
-./aseprite --version                # 二进制版本
-dpkg -I ./aseprite_*.deb            # deb包信息
-pacman -Qip ./aseprite-bin-*.pkg.tar.zst  # Arch包信息
+./aseprite --version                     # 二进制版本
+dpkg -I ./aseprite_*.deb                 # deb包信息
+rpm -qip ./aseprite-*.x86_64.rpm         # RPM包信息
+pacman -Qip ./aseprite-bin-*.pkg.tar.zst # Arch包信息
 ```
 
 ### Q: 如何自动化构建（如每周）？

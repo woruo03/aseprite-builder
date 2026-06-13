@@ -26,6 +26,11 @@ on:
         required: false
         default: true
         type: boolean
+      package_rpm:
+        description: "Package as .rpm for Fedora/RHEL"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -42,6 +47,9 @@ jobs:
       pkgver: ${{ steps.metadata.outputs.pkgver }}
       deb_version: ${{ steps.metadata.outputs.deb_version }}
       deb_revision: ${{ steps.metadata.outputs.deb_revision }}
+      rpm_version: ${{ steps.metadata.outputs.rpm_version }}
+      rpm_release: ${{ steps.metadata.outputs.rpm_release }}
+      rpm_package_name: ${{ steps.metadata.outputs.rpm_package_name }}
 
     steps:
       - name: Checkout repository
@@ -58,6 +66,7 @@ jobs:
           INPUT_ASEPRITE_TAG: ${{ github.event.inputs.aseprite_tag }}
           INPUT_SKIA_RELEASE_TAG: m124
           INPUT_DEB_REVISION: "1"
+          INPUT_RPM_RELEASE: "1"
           INPUT_RELEASE_TAG: ""
           INPUT_RELEASE_NAME: ""
           GH_TOKEN: ${{ github.token }}
@@ -82,6 +91,8 @@ jobs:
           deb_version="$(clean_version "${aseprite_tag}" 'A-Za-z0-9.+:~')" && [ -n "${deb_version}" ] || { echo "Failed to compute deb version" >&2; exit 1; }
           pkgver="$(clean_version "${aseprite_tag}" 'A-Za-z0-9._')" && [ -n "${pkgver}" ] || { echo "Failed to compute pkgver" >&2; exit 1; }
           deb_revision="$(clean_version "${INPUT_DEB_REVISION}" 'A-Za-z0-9+.~')" && [ -n "${deb_revision}" ] || { echo "Invalid deb revision" >&2; exit 1; }
+          rpm_version="$(clean_version "${aseprite_tag}" 'A-Za-z0-9._')" && [ -n "${rpm_version}" ] || { echo "Failed to compute rpm version" >&2; exit 1; }
+          rpm_release="$(clean_version "${INPUT_RPM_RELEASE}" 'A-Za-z0-9._')" && [ -n "${rpm_release}" ] || { echo "Invalid rpm release" >&2; exit 1; }
 
           {
             echo "aseprite_tag=${aseprite_tag}"
@@ -90,10 +101,13 @@ jobs:
             echo "skia_zip_url=${skia_zip_url}"
             echo "deb_version=${deb_version}"
             echo "deb_revision=${deb_revision}"
+            echo "rpm_version=${rpm_version}"
+            echo "rpm_release=${rpm_release}"
             echo "release_tag=${INPUT_RELEASE_TAG:-aseprite-${aseprite_tag}-linux-x64}"
             echo "release_name=${INPUT_RELEASE_NAME:-Aseprite ${aseprite_tag} for Linux (x64)}"
             echo "archive_name=aseprite-${aseprite_tag}-linux-x64.tar.xz"
             echo "deb_package_name=aseprite_${deb_version}-${deb_revision}_amd64.deb"
+            echo "rpm_package_name=aseprite-${rpm_version}-${rpm_release}.x86_64.rpm"
             echo "pkgver=${pkgver}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -445,9 +459,164 @@ jobs:
           path: work/output/${{ steps.arch.outputs.arch_pkg_name }}
           if-no-files-found: error
 
+  package-rpm:
+    needs: build-aseprite
+    if: ${{ github.event_name == 'push' || github.event.inputs.package_rpm == 'true' }}
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Install RPM packaging dependencies
+        run: |
+          set -euo pipefail
+          dnf install -y rpm-build binutils tar xz findutils
+
+      - name: Download Aseprite build
+        uses: actions/download-artifact@v4
+        with:
+          name: aseprite-build-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/release
+
+      - name: Create RPM package
+        env:
+          ASEPRITE_TAG: ${{ needs.build-aseprite.outputs.aseprite_tag }}
+          RPM_VERSION: ${{ needs.build-aseprite.outputs.rpm_version }}
+          RPM_RELEASE: ${{ needs.build-aseprite.outputs.rpm_release }}
+          RPM_PACKAGE_NAME: ${{ needs.build-aseprite.outputs.rpm_package_name }}
+        run: |
+          set -euo pipefail
+
+          release_dir="work/release/aseprite-${ASEPRITE_TAG}-linux-x64"
+          [ -d "${release_dir}" ] || { echo "Release directory not found: ${release_dir}" >&2; exit 1; }
+
+          rpm_top="${PWD}/work/rpmbuild"
+          mkdir -p "${rpm_top}"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+
+          source_basename="aseprite-${RPM_VERSION}"
+          tar -C work/release \
+            --transform "s|^aseprite-${ASEPRITE_TAG}-linux-x64|${source_basename}|" \
+            -cJf "${rpm_top}/SOURCES/${source_basename}.tar.xz" \
+            "aseprite-${ASEPRITE_TAG}-linux-x64"
+
+          spec_file="${rpm_top}/SPECS/aseprite.spec"
+          cat > "${spec_file}" <<'EOFSPEC'
+          Name:           aseprite
+          Version:        RPM_VERSION_PLACEHOLDER
+          Release:        RPM_RELEASE_PLACEHOLDER
+          Summary:        Animated sprite editor and pixel art tool
+          License:        Aseprite-EULA
+          URL:            https://www.aseprite.org/
+          Source0:        %{name}-%{version}.tar.xz
+          ExclusiveArch:  x86_64
+
+          Requires:       libstdc++
+          Requires:       libX11
+          Requires:       libXcursor
+          Requires:       libXi
+          Requires:       libXrandr
+          Requires:       fontconfig
+          Requires:       mesa-libGL
+          Requires:       libwebp
+
+          # Pre-built upstream binary; skip RPM auto-processing that breaks the build
+          %global __os_install_post %{nil}
+          %global debug_package %{nil}
+          AutoReqProv:    no
+
+          %description
+          Aseprite Linux binary package built in GitHub Actions from the upstream
+          release. Aseprite is an animated sprite editor and pixel art tool.
+
+          %prep
+          %setup -q -n %{name}-%{version}
+
+          %build
+          # Pre-built upstream binary; nothing to compile.
+
+          %install
+          rm -rf %{buildroot}
+          install -Dm0755 aseprite %{buildroot}%{_libdir}/aseprite/aseprite
+          cp -a data %{buildroot}%{_libdir}/aseprite/data
+
+          install -dm0755 %{buildroot}%{_bindir}
+          printf '#!/bin/sh\nexec %{_libdir}/aseprite/aseprite "$@"\n' > %{buildroot}%{_bindir}/aseprite
+          chmod 0755 %{buildroot}%{_bindir}/aseprite
+
+          icon=""
+          for f in data/icons/ase256.png data/icons/ase128.png data/icons/ase64.png; do
+            if [ -f "$f" ]; then icon="$f"; break; fi
+          done
+          if [ -z "$icon" ]; then
+            icon="$(find . -type f \( -iname 'aseprite*.png' -o -iname 'ase*.png' \) 2>/dev/null | head -1 || true)"
+          fi
+          install -dm0755 %{buildroot}%{_datadir}/pixmaps
+          if [ -n "$icon" ]; then
+            install -m0644 "$icon" %{buildroot}%{_datadir}/pixmaps/aseprite.png
+          else
+            touch %{buildroot}%{_datadir}/pixmaps/aseprite.png
+          fi
+
+          install -dm0755 %{buildroot}%{_datadir}/applications
+          cat > %{buildroot}%{_datadir}/applications/aseprite.desktop <<'EOFDESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=Aseprite
+          GenericName=Pixel Art Editor
+          Comment=Animated sprite editor and pixel art tool
+          Exec=/usr/bin/aseprite %F
+          Icon=aseprite
+          Terminal=false
+          Categories=Graphics;2DGraphics;RasterGraphics;
+          StartupWMClass=aseprite
+          EOFDESKTOP
+          chmod 0644 %{buildroot}%{_datadir}/applications/aseprite.desktop
+
+          install -dm0755 %{buildroot}%{_datadir}/licenses/%{name}
+          license_file=""
+          for f in LICENSE LICENSE.txt EULA.txt; do
+            if [ -f "$f" ]; then license_file="$f"; break; fi
+          done
+          if [ -n "$license_file" ]; then
+            install -m0644 "$license_file" %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
+          else
+            touch %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
+          fi
+
+          %files
+          %{_bindir}/aseprite
+          %{_libdir}/aseprite
+          %{_datadir}/applications/aseprite.desktop
+          %{_datadir}/pixmaps/aseprite.png
+          %{_datadir}/licenses/%{name}/LICENSE
+
+          %changelog
+          * Thu Jan 01 1970 GitHub Actions <actions@github.com> - RPM_VERSION_PLACEHOLDER-RPM_RELEASE_PLACEHOLDER
+          - Automated build from upstream Aseprite release.
+          EOFSPEC
+
+          sed -i "s|RPM_VERSION_PLACEHOLDER|${RPM_VERSION}|g; s|RPM_RELEASE_PLACEHOLDER|${RPM_RELEASE}|g" "${spec_file}"
+
+          rpmbuild --define "_topdir ${rpm_top}" -bb "${spec_file}"
+
+          rpm_path="$(find "${rpm_top}/RPMS" -type f -name '*.rpm' -print -quit)"
+          [ -n "${rpm_path}" ] || { echo "Failed to locate generated RPM" >&2; exit 1; }
+
+          mkdir -p work/output
+          cp "${rpm_path}" "work/output/${RPM_PACKAGE_NAME}"
+          rpm -qip "work/output/${RPM_PACKAGE_NAME}"
+          rpm -qlp "work/output/${RPM_PACKAGE_NAME}"
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aseprite-rpm-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/output/${{ needs.build-aseprite.outputs.rpm_package_name }}
+          if-no-files-found: error
+
   publish-draft-release:
-    needs: [build-aseprite, package-tarball, package-deb, package-arch]
-    if: ${{ always() && needs.build-aseprite.result == 'success' && (needs.package-tarball.result == 'success' || needs.package-tarball.result == 'skipped') && (needs.package-deb.result == 'success' || needs.package-deb.result == 'skipped') && (needs.package-arch.result == 'success' || needs.package-arch.result == 'skipped') }}
+    needs: [build-aseprite, package-tarball, package-deb, package-arch, package-rpm]
+    if: ${{ always() && needs.build-aseprite.result == 'success' && (needs.package-tarball.result == 'success' || needs.package-tarball.result == 'skipped') && (needs.package-deb.result == 'success' || needs.package-deb.result == 'skipped') && (needs.package-arch.result == 'success' || needs.package-arch.result == 'skipped') && (needs.package-rpm.result == 'success' || needs.package-rpm.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - name: Create output directory
@@ -473,6 +642,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: aseprite-arch-${{ needs.build-aseprite.outputs.aseprite_tag }}
+          path: work/final-release
+
+      - name: Download RPM artifact
+        if: ${{ needs.package-rpm.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: aseprite-rpm-${{ needs.build-aseprite.outputs.aseprite_tag }}
           path: work/final-release
 
       - name: List release files
